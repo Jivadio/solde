@@ -22,6 +22,8 @@ Solde also asks for a **setup code**. Until the first admin exists, the server p
 
 ```sh
 docker compose logs server | grep "setup code"
+# or, with SQLite
+docker compose -f compose.sqlite.yaml logs server | grep "setup code"
 ```
 
 Copy the `XXXX-XXXX-XXXX-XXXX` code into the setup screen. It stops working once setup is done, and each restart before then prints a new one. It is the only secret Solde ever writes to its log, on purpose and only for this reason.
@@ -83,7 +85,8 @@ With SQLite, stop the server for a moment so the database file is consistent, th
 
 ```sh
 docker compose -f compose.sqlite.yaml stop server
-docker run --rm -v solde-sqlite_solde-data:/data:ro -v "$PWD":/backup alpine:3.22 \
+docker run --rm --volumes-from "$(docker compose -f compose.sqlite.yaml ps -aq server)":ro \
+  -v "$PWD":/backup alpine:3.22 \
   tar czf /backup/solde-data-$(date +%F).tgz -C /data .
 docker compose -f compose.sqlite.yaml start server
 ```
@@ -94,13 +97,16 @@ Restore only backups you made yourself: a database file can be crafted to misbeh
 
 To restore a backed-up key on a new machine, or to manage the key yourself:
 
-1. Put it in a directory as `master.key` (the base64 text that `export-key` printed), readable by the server's user (uid 65532):
+1. Put it in a directory as `master.key` (the base64 text that `export-key` printed), readable by the server's user (uid 65532) and nobody else on the host:
 
    ```sh
-   mkdir -p /srv/solde-keys
-   cp master.key /srv/solde-keys/master.key
-   chmod 0755 /srv/solde-keys && chmod 0444 /srv/solde-keys/master.key
+   sudo mkdir -p /srv/solde-keys
+   sudo cp master.key /srv/solde-keys/master.key
+   sudo chown 65532:65532 /srv/solde-keys/master.key
+   sudo chmod 0755 /srv/solde-keys && sudo chmod 0400 /srv/solde-keys/master.key
    ```
+
+   The directory stays listable so `keygen` can see that a key is there; only the server's user can read the key itself.
 
 2. Start Solde with `SOLDE_KEYS_SOURCE=/srv/solde-keys`. `keygen` sees the key and leaves it untouched.
 
@@ -137,6 +143,8 @@ Your proxy should also pass the `Host` header through and must not cache `/api` 
    ```sh
    git pull
    docker compose up -d --build
+   # or, with SQLite
+   docker compose -f compose.sqlite.yaml up -d --build
    ```
 
 The server applies any new database migrations when it starts. There is no downgrade: a server refuses to open a database that a newer Solde has already migrated, so if you need to go back to an older version, restore the backup you made in step 1.
