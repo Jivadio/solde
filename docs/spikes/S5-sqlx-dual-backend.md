@@ -18,7 +18,8 @@ The spike had to show, on real queries, how much SQL can be written once.
 
 The real `crates/storage`, not a throwaway: the M2 schema (`schema_meta`,
 households, users, sessions, API tokens, invitations, accounts with a partial
-unique index on `(household_id, iban_normalized)`, account access, manual
+index on `(household_id, iban_normalized)`, deliberately not unique so that a
+uniqueness failure cannot reveal a private account, account access, manual
 transactions) and a `Store` trait with 34 methods covering it. That is well
 past the "10 representative queries plus one partial unique index" the plan
 asked for: inserts, lookups, conditional updates, `ON CONFLICT ... DO UPDATE`,
@@ -36,7 +37,7 @@ Every query. In practice the portable subset was wider than expected:
 - `$1`, `$2`, ... placeholders work on both (SQLx maps `$N` for SQLite).
 - `ON CONFLICT (...) DO UPDATE SET x = excluded.x` is the same syntax on both,
   so the upsert needed **no** override, contrary to the plan's guess.
-- `RETURNING`, partial unique indexes (`... WHERE iban_normalized IS NOT
+- `RETURNING`, partial indexes (`... WHERE iban_normalized IS NOT
   NULL`), `COALESCE`, `COUNT(*)` decoded as `i64`, `LIMIT $N` with an `i64`
   bind: identical.
 - Dates go through `chrono::NaiveDate` (`DATE` in PostgreSQL, `YYYY-MM-DD`
@@ -55,7 +56,7 @@ All of it lives in `crates/storage/src/overrides.rs`, behind a small
 | Timestamp column | `TIMESTAMPTZ` | fixed-width text `YYYY-MM-DDTHH:MM:SS.ffffffZ` | SQLx writes SQLite timestamps with a variable number of fraction digits, so text comparison (`expires_at > $1`) would be wrong |
 | Migration files | `migrations/postgres/` | `migrations/sqlite/` | column types differ (by design) |
 | "Does `schema_meta` exist?" | `information_schema.tables` | `sqlite_master` | no shared catalog |
-| Write lock (migrations, bootstrap) | `pg_advisory_xact_lock` | none | SQLite has a single writer connection already |
+| Write lock (migrations, bootstrap, access changes) | `pg_advisory_xact_lock` | `BEGIN IMMEDIATE` | the lock must be held before the first read, also across processes |
 | Rows affected | `PgQueryResult::rows_affected` | `SqliteQueryResult::rows_affected` | `Database::QueryResult` has no generic accessor |
 | Connection setup | pool of 10 | WAL, `busy_timeout=5000`, `foreign_keys=ON`, one writer, read-only readers | backend tuning |
 
