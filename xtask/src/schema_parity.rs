@@ -277,13 +277,30 @@ fn strip_comments(text: &str) -> String {
     out
 }
 
-/// Collapses whitespace, and removes it just inside parentheses.
+/// Collapses whitespace, and removes it just inside parentheses, outside
+/// quoted literals only: `'a  b'` and `'a b'` stay different.
 fn normalize(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace("( ", "(")
-        .replace(" )", ")")
+    let mut out = String::with_capacity(text.len());
+    let mut quoted = false;
+    let mut space = false;
+    for c in text.chars() {
+        if quoted {
+            out.push(c);
+            quoted = c != '\'';
+            continue;
+        }
+        if c.is_whitespace() {
+            space = true;
+            continue;
+        }
+        if space && !out.is_empty() && !out.ends_with('(') && c != ')' {
+            out.push(' ');
+        }
+        space = false;
+        out.push(c);
+        quoted = c == '\'';
+    }
+    out
 }
 
 /// Every difference between the two schemas, as readable lines.
@@ -460,6 +477,25 @@ mod tests {
             diff(PG, &no_index)
                 .iter()
                 .any(|p| p.contains("missing in sqlite"))
+        );
+    }
+
+    #[test]
+    fn whitespace_inside_literals_is_kept() {
+        assert_eq!(
+            normalize("  kind  TEXT ( 'a' ,  'b' )  "),
+            "kind TEXT ('a' , 'b')"
+        );
+        assert_eq!(
+            normalize("DEFAULT 'it''s  ( x )'"),
+            "DEFAULT 'it''s  ( x )'"
+        );
+        let pg = PG.replace("('a', 'b')", "('a  a', 'b')");
+        let sqlite = sqlite_from(PG).replace("('a', 'b')", "('a a', 'b')");
+        assert!(
+            diff(&pg, &sqlite)
+                .iter()
+                .any(|p| p.contains("things.kind differs"))
         );
     }
 
