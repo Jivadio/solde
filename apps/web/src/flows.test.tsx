@@ -262,7 +262,7 @@ describe('accounts and transactions', () => {
     );
     await user.selectOptions(within(dialog).getByLabelText('Type'), 'savings');
     await user.type(
-      within(dialog).getByLabelText(/Current balance/),
+      within(dialog).getByLabelText(/Opening balance/),
       '1 240,50',
     );
     await user.click(
@@ -333,14 +333,14 @@ describe('accounts and transactions', () => {
       name: 'Add an account',
     });
     await user.type(within(dialog).getByLabelText('Account name'), 'Typo');
-    await user.type(within(dialog).getByLabelText(/Current balance/), '12.345');
+    await user.type(within(dialog).getByLabelText(/Opening balance/), '12.345');
     await user.click(
       within(dialog).getByRole('button', { name: 'Add the account' }),
     );
     expect(
       within(dialog).getByText('Use at most 2 decimals.'),
     ).toBeInTheDocument();
-    expect(within(dialog).getByLabelText(/Current balance/)).toHaveFocus();
+    expect(within(dialog).getByLabelText(/Opening balance/)).toHaveFocus();
     expect(requests.some((r) => r.method === 'POST')).toBe(false);
   });
 

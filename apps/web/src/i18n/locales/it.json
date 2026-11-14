@@ -85,7 +85,7 @@
     "add": "Add an account",
     "listTitle": "{count, plural, one {# account} other {# accounts}}",
     "emptyTitle": "No accounts yet",
-    "emptyBody": "Add an account with its current balance, then record its transactions by hand.",
+    "emptyBody": "Add an account with its opening balance, then record its transactions by hand.",
     "balanceUnknown": "Balance unknown",
     "columns": {
       "account": "Account",
@@ -132,8 +132,8 @@
     "errors": {
       "nameRequired": "Enter a name for the account."
     },
-    "balance": "Current balance",
-    "balanceHint": "What the account holds today. Use a minus sign for an overdraft or a loan. Leave it empty if you don’t know.",
+    "balance": "Opening balance",
+    "balanceHint": "What the account held before the transactions you add here: don’t include them in it. Use a minus sign for an overdraft or a loan. Leave it empty if you don’t know.",
     "added": "Account added."
   },
   "account": {
@@ -323,7 +323,7 @@
     "accountsCounted": "{count, plural, one {# account} other {# accounts}}",
     "unknownLeftOut": "{count, plural, one {# account without a known balance isn’t counted.} other {# accounts without a known balance aren’t counted.}}",
     "noTotalTitle": "No total yet",
-    "noTotalBody": "None of your accounts has a known balance. Add an account with its current balance to see your total here.",
+    "noTotalBody": "None of your accounts has a known balance. Add an account with its opening balance to see your total here.",
     "seeAll": "See all accounts",
     "latest": "Latest transactions",
     "noTransactions": "No transactions yet. Open an account to add one.",
