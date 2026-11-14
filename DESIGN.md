@@ -10,7 +10,7 @@ The UI ships in five languages (**EFIGS**: English, French, Italian, German, Spa
 
 ## Principles
 
-1. **The number comes first.** One hero amount per screen (`amount-xl`). Everything else is subordinate to it, and nothing decorative sits next to a balance.
+1. **The number comes first.** One hero amount per screen (`amount-xl`). Everything else is subordinate to it, and nothing decorative sits next to a balance. The hero is always a **current** balance: an opening balance is never a hero, and a hero card is never empty (when the balance is unknown, say so in a plain card and say why).
 2. **Ink, not colour.** The interface is black and off-white, and the accent is the ink itself (`accent` = `ink`). Colour is reserved for **meaning**: `positive`, `negative`, `warning`.
 3. **One lime.** `highlight` (#c8f04a) is Solde's identity: a healthy gauge, a goal reached, the active tab, the main chart series. In the light theme it never carries text (1.3:1 on white). It is a fill, with `on-highlight` on top.
 4. **Never colour alone.** `+€120.00` / `−€42.90` (real minus sign, U+2212), "Almost reached" spelled out, an arrow on deltas. Readable by colour-blind users and in greyscale.
@@ -39,7 +39,7 @@ Short sentences, concrete numbers. Say what is happening and what to do. Write t
 
 ## Colours
 
-- **Backgrounds**: `bg` → `surface` (cards) → `surface-sunken` (tracks, chips, hover). Use `surface-inverse` + `on-inverse` (and `on-inverse-muted` for secondary text) for an inverted hero card, at most one per screen.
+- **Backgrounds**: `bg` → `surface` (cards) → `surface-sunken` (tracks, chips, hover). In dark mode `surface-sunken` is one step *lighter* than `surface`, never a hole darker than the page. Use `surface-inverse` + `on-inverse` (and `on-inverse-muted` for secondary text) for an inverted hero card, at most one per screen.
 - **Text**: `ink` (≥ 15:1), `ink-muted` (≥ 4.5:1 on `bg`, `surface` and `surface-sunken` in both themes), `ink-disabled` for disabled content only.
 - **Action**: `accent` / `accent-hover` / `on-accent`. In dark mode the accent inverts (off-white button, black text).
 - **Meaning**: `positive`, `negative`, `warning`, each with a `-soft` background for badges and alerts (text ≥ 4.5:1 on its background).
@@ -52,7 +52,7 @@ Short sentences, concrete numbers. Say what is happening and what to do. Write t
 Inter, a single family, always with tabular figures (`font-variant-numeric: tabular-nums`). Inter covers every EFIGS character.
 
 - **Amounts**: `amount-xl` (40), `amount-lg` (28), `amount-md` (16), `amount-sm` (13). In `xl`/`lg`, the cents are in `ink-muted`.
-- **Text**: `title` (24, one per screen), `heading` (16, card titles), `body` (15), `label` (13, buttons and fields), `caption` (12, metadata), `overline` (11, capitals, only above a hero amount).
+- **Text**: `title` (24, one per screen; `title-lg` grows it to 28 from the `lg` breakpoint for page titles), `heading` (16, card titles), `body` (15), `label` (13, buttons and fields), `caption` (12, metadata), `overline` (11, capitals, only above a hero amount).
 
 ## Spacing, shapes, sizes
 
@@ -62,7 +62,30 @@ Elevation: the border does the work. `shadow-card` is almost invisible. `shadow-
 
 ## Iconography
 
-A provisional in-house set (`Icon`): 1.75 px stroke, 24 grid, round caps, in `currentColor`. In a transaction row, the category icon sits on a 40 px `surface-sunken` tile (`icon-tile`). An icon never carries meaning alone: add a label or an `aria-label`.
+A provisional in-house set (`Icon`): 1.75 px stroke, 24 grid, round caps, in `currentColor`. In a transaction row, the category icon sits on a 40 px `surface-sunken` tile (`icon-tile`). Until transactions have categories, rows have **no** icon tile: an arrow per row says nothing the sign does not already say (and "up-right" reads as a rise). Accounts keep their type icon. An icon never carries meaning alone: add a label or an `aria-label`.
+
+## Account numbers
+
+An IBAN is grouped by four (`FR76 3000 6000 0112 3456 7890 189`), in the tabular sans, never monospace. It is shown in full only in the account's details (a dialog opened from the account screen). Everywhere else (cards, lists, headers) it is masked to its last four characters: `•••• 0189`.
+
+## Layout
+
+Two breakpoints, written as literal `min-width` media queries (CSS variables cannot be used in media queries; these are the only literal lengths outside the tokens):
+
+| Name | Min width | What changes |
+|---|---|---|
+| base | 0 | One column, gutter `space-4`. Top bar + bottom tab bar. Dialogs open as bottom sheets. Tables fold into rows. |
+| `md` | 768px | Dialogs are centred. Tables show their column headers. Gutter `space-6`. |
+| `lg` | 1024px | Sidebar (`sidebar-width`) replaces the top bar and the tab bar. Gutter `space-8`, `title-lg` page titles. |
+
+- **Content width**: the content area fills the space next to the sidebar up to `content-max` (1200 px), aligned left beside it, not centred in the window. Only a lone form is narrow (`content-narrow`), and lone forms live in dialogs.
+- **Rhythm**: `space-6` between sections on mobile, `space-8` from `md`. Cards keep `space-4` padding (`space-5` for the hero).
+- **Card grids**: `repeat(auto-fill, minmax(min(100%, var(--card-min)), 1fr))`, gap `space-4` (mobile) / `space-6`.
+- **Long text**: every row, header and button wraps (`min-width: 0`, `overflow-wrap: anywhere` on names). A label is never truncated with an ellipsis, except the household name in the mobile top bar, as a last resort.
+
+## Motion
+
+`motion-fast` (120 ms) for hover and colour changes, `motion-base` (200 ms) for things that appear (dialog, sheet, menu, toast), always with `ease-out`. Dialogs fade their scrim and rise 8 px; sheets slide up from the bottom edge; a row just added flashes `highlight-soft` once. Under `prefers-reduced-motion`, everything appears without moving.
 
 No logo yet: the name is set in Inter 600, `ink`.
 
@@ -70,7 +93,7 @@ No logo yet: the name is set in Inter 600, `ink`.
 
 All monetary props (`amount`, `value`, `delta`, `spent`, `limit`, chart values) are integer minor units. Every component that shows money takes a required `currency` prop (ISO 4217 code, e.g. `'EUR'`) and a required `digits` prop (the API's `minor_digits`) from the account or transaction it belongs to; the formatter needs the currency for the symbol and the digits for the minor-unit scale.
 
-`Button`, `Amount`, `Badge`, `Icon`, `Card`, `SegmentedControl`, `AmountField`, `TransactionRow`, `BalanceCard`, `BudgetGauge`, `CategoryBar`, `Notice`, `TabBar`, and the **Home** reference screen. They are React components whose styles read only the token variables. They will live in `apps/web` once the UI work starts.
+`Button`, `Amount`, `Badge`, `Icon`, `Card`, `SegmentedControl`, `AmountField`, `Select`, `TransactionRow`, `BalanceCard`, `SummaryCard`, `AccountCard`, `DataTable`, `BudgetGauge`, `CategoryBar`, `Notice`, `EmptyState`, `Skeleton`, `Toast`, `Dialog`, `Menu`, `PageHeader`, `AppShell`, `TabBar`, and the **Home** and **Overview** reference screens. They are React components whose styles read only the token variables, in `apps/web/src/components/` (the shell in `apps/web/src/screens/AppLayout.tsx`). `BudgetGauge`, `CategoryBar` and `BalanceCard`'s sync freshness wait for budgets and bank sync.
 
 ## Accessibility
 
@@ -89,7 +112,7 @@ Themes: `light` (default) and `dark`, applied through `[data-theme="…"]` on `<
 |---|---|---|---|
 | `--bg` | `#f5f5f2` | `#0e0f11` | Page background. `surface` cards on top create the hierarchy, not shadows. |
 | `--surface` | `#ffffff` | `#17191c` | Cards, sheets, transaction lists, fields. |
-| `--surface-sunken` | `#ebebe6` | `#0a0b0c` | Recessed areas: gauge tracks, segmented control, chips, row hover. |
+| `--surface-sunken` | `#ebebe6` | `#202328` | Recessed areas: gauge tracks, segmented control, chips, row hover, active nav item. In dark it sits one step above `surface` (`ink-muted` on it: 5.98:1). |
 | `--surface-inverse` | `#121417` | `#f2f2ee` | Inverted hero card (balance, bank card), toast. Text on top: `on-inverse`. |
 | `--on-inverse` | `#f5f5f2` | `#121417` | Text on `surface-inverse`. |
 | `--on-inverse-muted` | `#9aa0a8` | `#5a5f66` | Secondary text on `surface-inverse`: labels, cents, sync freshness (7.0:1 light, 5.7:1 dark). Never `ink-muted` on an inverse card. |
@@ -129,6 +152,7 @@ Family: `--font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-
 | `.amount-md` | 16px / 22px | 600 | 0 | −€42.90 | Transaction or account row amount, right-aligned. |
 | `.amount-sm` | 13px / 18px | 500 | 0 | +€312.40 | Deltas, secondary amounts within a label. |
 | `.title` | 24px / 30px | 600 | -0.015em | November budget | Screen title, one per screen. |
+| `.title-lg` | 24px / 30px, 28px / 34px from `lg` | 600 | -0.015em, -0.02em from `lg` | Accounts | Page title in the app shell: anchors wide pages. |
 | `.heading` | 16px / 22px | 600 | -0.005em | Recent transactions | Card or section title. |
 | `.body` | 15px / 22px | 400 | 0 | Your rent will be debited in 3 days. | Body text, main label of a row. |
 | `.label` | 13px / 18px | 500 | 0 | Add an account | Buttons, tabs, field labels. |
@@ -166,6 +190,25 @@ Family: `--font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-
 | `--control-md` | `44px` | Standard button and field height: minimum touch target. |
 | `--control-lg` | `56px` | Amount entry field, full-width button at the bottom of the screen. |
 | `--icon-tile` | `40px` | Category icon tile in a row. |
+
+## Layout sizes
+
+| Token | Value | Usage |
+|---|---|---|
+| `--sidebar-width` | `240px` | Desktop sidebar, from the `lg` breakpoint. |
+| `--content-max` | `1200px` | Widest content area, next to the sidebar. |
+| `--content-narrow` | `560px` | Dialog width; a lone form. |
+| `--card-min` | `280px` | Smallest column of a card grid. |
+| `--topbar-height` | `56px` | Mobile and tablet top bar. |
+| `--tabbar-height` | `64px` | Mobile and tablet bottom tab bar (plus the device's safe area). |
+
+## Motion
+
+| Token | Value | Usage |
+|---|---|---|
+| `--motion-fast` | `120ms` | Hover, colour and border changes. |
+| `--motion-base` | `200ms` | Dialogs, sheets, menus and toasts appearing. |
+| `--ease-out` | `cubic-bezier(0.2, 0.8, 0.2, 1)` | Every transition and entrance. |
 
 ## Shadows
 
@@ -214,7 +257,7 @@ Family: `--font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-
 [data-theme="dark"] {
   --bg: #0e0f11;
   --surface: #17191c;
-  --surface-sunken: #0a0b0c;
+  --surface-sunken: #202328;
   --surface-inverse: #f2f2ee;
   --on-inverse: #121417;
   --on-inverse-muted: #5a5f66;
@@ -264,12 +307,23 @@ Family: `--font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-
   --control-md: 44px;
   --control-lg: 56px;
   --icon-tile: 40px;
+  --sidebar-width: 240px;
+  --content-max: 1200px;
+  --content-narrow: 560px;
+  --card-min: 280px;
+  --topbar-height: 56px;
+  --tabbar-height: 64px;
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .amount-xl { font: 600 40px/44px var(--font-sans); letter-spacing: -0.025em; font-variant-numeric: tabular-nums; }
 .amount-lg { font: 600 28px/32px var(--font-sans); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .amount-md { font: 600 16px/22px var(--font-sans); font-variant-numeric: tabular-nums; }
 .amount-sm { font: 500 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
 .title { font: 600 24px/30px var(--font-sans); letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
+.title-lg { font: 600 24px/30px var(--font-sans); letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
+@media (min-width: 1024px) { .title-lg { font: 600 28px/34px var(--font-sans); letter-spacing: -0.02em; } }
 .heading { font: 600 16px/22px var(--font-sans); letter-spacing: -0.005em; font-variant-numeric: tabular-nums; }
 .body { font: 400 15px/22px var(--font-sans); font-variant-numeric: tabular-nums; }
 .label { font: 500 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
@@ -429,7 +483,7 @@ interface AmountFieldProps {
 
 ## TransactionRow
 
-One transaction in a list: icon tile, label, metadata, amount aligned right.
+One transaction in a list: icon tile (once transactions have categories, see Iconography), label, metadata, amount aligned right. In a `DataTable` it is one row.
 
 - Negative `amount` = expense in `ink`. Positive = `+` in `positive`. `alert` for fees and penalties, in `negative`.
 - `pending`: label and amount in `ink-muted`, metadata "Pending".
@@ -537,7 +591,7 @@ interface NoticeProps {
 Main mobile navigation, 5 destinations maximum.
 
 - Always icon + label. The active tab gets a `highlight` pill and `aria-current="page"`.
-- Canonical order: Home, Transactions, Budgets, Savings, Profile.
+- Canonical order: Home, Transactions, Budgets, Savings, Profile. Today (M2) it holds Overview, Accounts, Invitations (admins only) and API tokens, the same destinations as the sidebar.
 - Labels are short in every EFIGS language. Check German, the longest, at 390 px.
 
 ```ts
@@ -549,7 +603,69 @@ interface TabBarProps {
 }
 ```
 
-`IconName` type: `plus`, `arrow-up-right`, `arrow-down-left`, `arrow-right-left`, `chevron-right`, `check`, `alert`, `info`, `eye`, `eye-off`, `home`, `chart`, `card`, `piggy`, `cart`, `building`, `briefcase`, `train`, `bolt`, `search`, `user`, `clock`.
+## Select
+
+A native `<select>` in a field frame, with the `chevron-down` icon drawn next to it (never CSS gradients). Same height, border and focus as a text field. In a table row the visible label is dropped and the select gets a translated `aria-label` ("Access for Bob Example").
+
+## AppShell
+
+The frame of every signed-in screen.
+
+- From `lg`: a `surface` sidebar of `sidebar-width` with a `border` on its right: wordmark (links to the overview), household name in `caption`, the main navigation, then a "Household" group (Invitations for admins, API tokens), and at the bottom the member's name with a `Menu` holding "Sign out". The active item has a `surface-sunken` fill, `ink` text and a 4 px `highlight` bar on its left; the others are `ink-muted`. Items wrap, never truncate.
+- Below `lg`: a top bar of `topbar-height` (wordmark, household name, member `Menu`) and a bottom `TabBar` of `tabbar-height` with the same destinations (icon + label, the active one on a `highlight` pill).
+- Sign out is never a destination: it lives in the member menu.
+- The skip link is the first focusable element. It sits above the viewport (`transform`) until focused, then slides in at the top left as a plain `accent` button, without a shadow.
+- A toast region (`role="status"`) sits above the tab bar on mobile and at the bottom right from `lg`.
+- The signed-in 404 renders inside the shell, so the navigation stays.
+
+## PageHeader
+
+Back link (optional, `ink-muted`, chevron), `title-lg`, then a subtitle line (badges or one sentence). Actions sit on the right from `md` and wrap under the title below: **at most one primary**, plus a `Menu` for secondary actions. A permanent state (view only) is a `Badge` with a `caption` in the subtitle line, not a `Notice`. When a list is empty, its primary action moves into the `EmptyState` and the header drops it: never two identical buttons on one screen.
+
+## SummaryCard
+
+The overview hero: an inverse card with an `overline`, one `amount-xl` total for the main currency, then one `amount-md` line per other currency. Totals are **never converted** between currencies. A caption counts the accounts in each total, and says how many are left out because their balance is unknown. No delta until there is a history.
+
+## AccountCard
+
+A `surface` card in a card grid, the whole card one link: type icon tile, name (`heading`, wraps), "type · currency · •••• 0189" in `caption`, the current balance in `amount-lg` (or "Balance unknown" in `ink-muted`), and the viewer's access as a `Badge` when they are not the owner. The grid ends with a dashed (`border-strong`) "Add an account" card, the only add action on that screen.
+
+## DataTable
+
+A full-width list of records in a flush card: a real `<table>` with a visually hidden `<caption>`.
+
+- From `md`: column headers in `caption` `ink-muted`, rows at least 52 px, `border` separators, `surface-sunken` on hover for rows that link somewhere. Amounts are right-aligned `amount-md`.
+- Below `md`: headers are hidden (still read by screen readers), each row folds into a block: the main cell on the first line, the others as `caption` lines, the amount on the right.
+- Transactions are grouped by day: a sticky `overline` row ("Today", "Yesterday", "28 Oct") heads each group. A pending transaction says "Pending" in a `warning` badge, and its label and amount are `ink-muted`.
+- Row actions go in a `Menu` in the last cell. A row just added flashes `highlight-soft` once.
+
+## Dialog
+
+Secondary creation and anything that needs focus (add a transaction, an account, an invitation, a token, give access, confirm a deletion, account details) opens in a dialog from a button, never as a form that is always on screen.
+
+- Native `<dialog>` opened with `showModal()`: the page behind is inert, so focus stays inside. `Esc` and a click on the `scrim` close it (unless a request is running), and focus returns to the button that opened it.
+- From `md`: centred, `content-narrow` wide, `surface`, `radius-xl`, `shadow-pop`, padding `space-6`. Below `md`: a **bottom sheet**, full width, top corners `radius-xl`, at most 90 % of the height, scrolling inside.
+- Header: `heading` title (the dialog's `aria-labelledby`) and an icon-only close button (`aria-label` "Close"). Footer: the primary action last, a `ghost` "Cancel" before it.
+- Focus starts on the first field (or the safest action of a confirmation). A confirmation is an `alertdialog` whose irreversible action is a `danger` button.
+- A secret shown once (invitation link, API token) replaces the form inside the same dialog.
+
+## Menu
+
+A ghost icon button (`more`, `aria-label` "More actions for …") opening a `surface` menu with `shadow-pop`, `radius-md`. ARIA menu button pattern: `aria-haspopup="menu"`, `aria-expanded`, `role="menu"` and `menuitem`, arrows, `Home`/`End`, `Esc` (focus back on the button), closes on `Tab` and on a click outside. A destructive item is in `negative` and always leads to a confirmation dialog.
+
+## EmptyState
+
+Centred in its area, `space-12` above: an icon tile, a `heading`, one sentence that says what the screen is for, and **one** action. Never a second copy of the header's button.
+
+## Skeleton
+
+While a screen loads, grey `surface-sunken` blocks the shape of the content replace it (a balance, rows), with a visually hidden "Loading…" status. They pulse gently, and stay still under `prefers-reduced-motion`.
+
+## Toast
+
+A short confirmation after an action that closes its dialog ("Transaction added."): `surface-inverse`, `on-inverse`, `radius-md`, `shadow-pop`, announced politely (`role="status"`), gone after a few seconds. Never for errors: errors stay in the dialog, next to what failed.
+
+`IconName` type: `plus`, `arrow-up-right`, `arrow-down-left`, `arrow-right-left`, `chevron-right`, `chevron-down`, `check`, `alert`, `info`, `eye`, `eye-off`, `home`, `grid`, `chart`, `card`, `piggy`, `cart`, `building`, `briefcase`, `train`, `bolt`, `search`, `user`, `users`, `clock`, `close`, `more`, `logout`, `key`.
 
 Utility: `formatAmount(value, { locale, signed?, decimals?, currency, digits })` takes `value` in integer minor units, divides it by 10^digits, where `digits` is the currency's minor-unit count **as the server reports it** (`minor_digits` on accounts and transactions, from ISO 4217: 2 for EUR and HUF, 0 for JPY, 3 for IQD), then formats with `Intl.NumberFormat(locale, { style: 'currency', currency })`, passing `minimumFractionDigits` and `maximumFractionDigits` explicitly. Never take the digits from `Intl`: browsers follow CLDR, which disagrees with ISO 4217 for a few currencies (HUF, IQD, LBP, IRR, ALL), and amounts would be 100× off. A value that is not a safe integer renders as `—` instead of throwing; the server never sends one (amounts are limited to ±(2^53 − 1)). `decimals` only changes how many fraction digits are *displayed* (it sets both `minimumFractionDigits` and `maximumFractionDigits`, e.g. `decimals: 0` for "Over by €22"); the conversion from minor units always uses the currency's own scale. The formatter also replaces the `-` sign with `−` (U+2212) and uses `signDisplay: 'exceptZero'` when `signed`.
 
@@ -573,10 +689,25 @@ Structure, top to bottom, gutter `space-4`, gap `space-4`:
 
 ---
 
+# Reference screen: Overview (desktop, 1440 px)
+
+What Solde shows today (M2: manual accounts, no bank sync, no budgets), at `/`, inside the `AppShell`:
+
+1. Sidebar: wordmark, household name, Overview (active), Accounts, "Household": Invitations, API tokens; the member menu at the bottom.
+2. `PageHeader`: "Overview", no action (adding an account lives in the grid).
+3. `SummaryCard`: total of the visible accounts with a known balance, per currency, never converted.
+4. "Accounts": an `AccountCard` grid ending with the dashed "Add an account" card.
+5. "Latest transactions": the 8 most recent transactions across the visible accounts, the account name in `caption`.
+
+On mobile the same column stacks under the top bar, with the tab bar at the bottom. With no account yet, the summary and the grid give way to one `EmptyState` that explains Solde reads accounts and never moves money.
+
+The account screen follows the same frame: `PageHeader` (back to Accounts, badges, "Add a transaction" primary, a `Menu` with sharing and details), an inverse balance strip (current balance as the hero, opening balance and this month's money in and out beside it), then the transactions `DataTable`.
+
+---
+
 # To do (out of current scope)
 
 - Transactions, Budgets, Savings and Profile screens.
-- Components: modal sheet (`radius-xl`, `scrim`, `shadow-pop`), toast, account row, balance-over-time chart, empty state, loading skeleton, language picker.
+- Components: balance-over-time chart, language picker, discreet mode (eye) on the hero amounts.
 - Logo and final icon set (the current set is provisional).
-- Responsive desktop grid and breakpoints. Motion principles (durations, curves).
-- Translation workflow: catalogue format, contributor tooling, and a German screenshot pass in CI.
+- Translation workflow: catalogue format, contributor tooling, and a German (or pseudo-locale, +40 %) screenshot pass in CI.
