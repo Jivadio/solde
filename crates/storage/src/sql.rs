@@ -7,12 +7,14 @@
 //! database), so the contract tests in `tests/contract.rs` exercise every
 //! method on both backends.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use chrono::{NaiveDate, Utc};
 use solde_core_domain::{
     Account, AccountAccess, AccountId, AccountKind, CategoryId, CategorySource, Currency,
-    Household, HouseholdId, Money, Permission, Role, Transaction, TransactionId, User, UserId,
-    normalize_iban,
+    Household, HouseholdId, Money, Permission, Role, Transaction, TransactionId, TransactionStatus,
+    User, UserId, normalize_iban,
 };
 use sqlx::{ColumnIndex, Executor, IntoArguments, Pool, Row};
 
@@ -980,6 +982,39 @@ where
         .await?
         .iter()
         .map(Self::decode_transaction)
+        .collect()
+    }
+
+    async fn booked_totals(
+        &self,
+        household_id: HouseholdId,
+    ) -> Result<HashMap<AccountId, i128>, StoreError> {
+        // A plain `SUM(amount_minor)` overflows (an error on SQLite) once
+        // the total leaves the `i64` range, which stored amounts allow. So
+        // each amount is split into its high 32 bits (arithmetic shift, so
+        // signed) and its low 32 bits (unsigned), each summed on its own:
+        // neither sum can overflow before billions of rows. Rust adds them
+        // back exactly in `i128`. `CAST(... AS BIGINT)` turns PostgreSQL's
+        // `NUMERIC` sum back into an integer and is a no-op on SQLite.
+        sqlx::query(
+            "SELECT t.account_id AS account_id, \
+                    CAST(SUM(t.amount_minor >> 32) AS BIGINT) AS high, \
+                    CAST(SUM(t.amount_minor & 4294967295) AS BIGINT) AS low \
+             FROM transactions t JOIN accounts a ON a.id = t.account_id \
+             WHERE a.household_id = $1 AND t.status = $2 AND t.currency = a.currency \
+             GROUP BY t.account_id",
+        )
+        .bind(Self::id(household_id.as_u128()))
+        .bind(status_to_text(TransactionStatus::Booked).to_owned())
+        .fetch_all(&self.reader)
+        .await?
+        .iter()
+        .map(|row| {
+            let account_id = AccountId::from_u128(Self::get_id(row, "account_id")?);
+            let high: i64 = row.try_get("high")?;
+            let low: i64 = row.try_get("low")?;
+            Ok((account_id, (i128::from(high) << 32) + i128::from(low)))
+        })
         .collect()
     }
 }

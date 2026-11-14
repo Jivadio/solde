@@ -41,8 +41,8 @@ mod transactions;
 mod viewer;
 
 pub use accounts::{
-    NewManualAccount, VisibleAccount, create_account, delete_account, get_account, list_accounts,
-    validate_iban,
+    NewManualAccount, VisibleAccount, create_account, current_balance, delete_account, get_account,
+    list_accounts, validate_iban,
 };
 pub use auth::{
     CreatedApiToken, OpenedSession, SESSION_TTL, api_token_viewer, close_session, create_api_token,

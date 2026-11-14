@@ -1064,10 +1064,18 @@
               "null"
             ],
             "format": "int64",
-            "description": "Opening balance in minor units, if known. It does not move with\ntransactions."
+            "description": "Opening balance in minor units, if known. It does not move with\ntransactions: see `current_balance_minor`."
           },
           "currency": {
             "type": "string"
+          },
+          "current_balance_minor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Current balance in minor units: `balance_minor` plus every booked\ntransaction in the account's currency (pending ones are left out).\n`null` when the opening balance is unknown, or when the total would\nleave ±(2^53 − 1)."
           },
           "iban": {
             "type": [

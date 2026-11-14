@@ -826,6 +826,54 @@ async fn ac2_visibility_and_permissions(api: &TestApi) {
         .await;
     assert_eq!(res.status, StatusCode::OK);
     assert_eq!(res.body["permission"], "read");
+    // No opening balance, so no current balance either.
+    assert_eq!(res.body["balance_minor"], Value::Null);
+    assert_eq!(res.body["current_balance_minor"], Value::Null);
+
+    // With an opening balance, the current one follows booked transactions.
+    let res = api
+        .send(
+            Req::post(
+                "/api/v1/accounts",
+                json!({"kind": "savings", "name": "Fake savings", "currency": "EUR",
+                       "balance_minor": 10_000}),
+            )
+            .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{:?}", res.body);
+    assert_eq!(res.body["current_balance_minor"], 10_000);
+    let savings = res.body["id"].as_str().expect("id").to_owned();
+    let res = api
+        .send(
+            Req::post(
+                &format!("/api/v1/accounts/{savings}/transactions"),
+                transaction("Fake transfer fee", -4200),
+            )
+            .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED);
+    let res = api
+        .send(Req::get(&format!("/api/v1/accounts/{savings}")).cookie(&alice))
+        .await;
+    assert_eq!(res.body["balance_minor"], 10_000, "opening stays put");
+    assert_eq!(res.body["current_balance_minor"], 5_800);
+    let list = api.send(Req::get("/api/v1/accounts").cookie(&alice)).await;
+    let listed = list
+        .body
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|a| a["id"] == savings.as_str())
+        .expect("listed");
+    assert_eq!(listed["current_balance_minor"], 5_800);
+    let res = api
+        .send(Req::get(&format!("/api/v1/accounts/{savings}")).cookie(&bob))
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "never shared with Bob");
+    let list = api.send(Req::get("/api/v1/accounts").cookie(&bob)).await;
+    assert!(!list.body.to_string().contains("Fake savings"));
     let res = api
         .send(Req::get(&format!("/api/v1/accounts/{joint}/transactions")).cookie(&bob))
         .await;

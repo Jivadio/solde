@@ -142,6 +142,7 @@ on_every_backend!(
     bootstrap_and_invitations,
     iban_duplicates_never_leak,
     amounts_and_ibans_are_validated,
+    current_balances,
 );
 
 // --- Helpers ----------------------------------------------------------
@@ -702,6 +703,128 @@ async fn amounts_and_ibans_are_validated(store: &dyn Store) {
     solde_services::create_transaction(s, alice, id, spending(MAX_AMOUNT_MINOR, "Edge"))
         .await
         .expect("edge amount");
+}
+
+/// The current balance is the opening balance plus booked transactions,
+/// per account, and a viewer only ever gets it for accounts they see.
+async fn current_balances(store: &dyn Store) {
+    let (_, members) = household(
+        store,
+        &[
+            ("Alice Test", "alice@example.test", Role::Member),
+            ("Bob Test", "bob@example.test", Role::Member),
+        ],
+    )
+    .await;
+    let (alice, bob) = (&members[0], &members[1]);
+    let s = store;
+
+    let private = solde_services::create_account(s, alice, account("Alice", Currency::EUR))
+        .await
+        .expect("private");
+    assert_eq!(private.current_balance_minor, Some(10_000), "new account");
+    let private = private.account.id;
+    let joint = solde_services::create_account(s, alice, account("Joint", Currency::EUR))
+        .await
+        .expect("joint")
+        .account
+        .id;
+    let unknown = solde_services::create_account(
+        s,
+        alice,
+        NewManualAccount {
+            balance_minor: None,
+            ..account("No opening balance", Currency::EUR)
+        },
+    )
+    .await
+    .expect("no opening");
+    assert_eq!(unknown.current_balance_minor, None);
+    let unknown = unknown.account.id;
+    let edge = solde_services::create_account(
+        s,
+        alice,
+        NewManualAccount {
+            balance_minor: Some(MAX_AMOUNT_MINOR),
+            ..account("Edge", Currency::EUR)
+        },
+    )
+    .await
+    .expect("edge")
+    .account
+    .id;
+
+    for (id, minor, label) in [
+        (private, -2_550, "Fake grocer"),
+        (private, 100_000, "Fake salary"),
+        (joint, -1_000, "Fake utility"),
+        (unknown, -4_200, "Fake bakery"),
+        (edge, 1, "Fake interest"),
+    ] {
+        solde_services::create_transaction(s, alice, id, spending(minor, label))
+            .await
+            .expect("booked");
+    }
+    // Pending transactions do not count yet.
+    solde_services::create_transaction(
+        s,
+        alice,
+        private,
+        NewManualTransaction {
+            status: TransactionStatus::Pending,
+            ..spending(-999, "Fake pending")
+        },
+    )
+    .await
+    .expect("pending");
+    solde_services::share_account(s, alice, joint, bob.user_id(), Permission::Read)
+        .await
+        .expect("share joint");
+
+    let balances = |list: Vec<solde_services::VisibleAccount>| {
+        list.into_iter()
+            .map(|visible| (visible.account.id, visible.current_balance_minor))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let for_alice = balances(solde_services::list_accounts(s, alice).await.expect("list"));
+    assert_eq!(
+        for_alice,
+        BTreeMap::from([
+            (private, Some(107_450)),
+            (joint, Some(9_000)),
+            (unknown, None),
+            (edge, None),
+        ]),
+        "opening + booked; none without an opening balance or out of range"
+    );
+    for (id, expected) in &for_alice {
+        let one = solde_services::get_account(s, alice, *id)
+            .await
+            .expect("get");
+        assert_eq!(one.current_balance_minor, *expected, "get matches list");
+    }
+
+    // Bob sees the joint account's balance, and nothing about the others.
+    let for_bob = balances(solde_services::list_accounts(s, bob).await.expect("bob"));
+    assert_eq!(for_bob, BTreeMap::from([(joint, Some(9_000))]));
+    for hidden in [private, unknown, edge] {
+        assert_not_found(
+            solde_services::get_account(s, bob, hidden).await,
+            "hidden balance",
+        );
+    }
+
+    // Back in range once the total returns within ±(2^53 − 1).
+    solde_services::create_transaction(s, alice, edge, spending(-1, "Fake fee"))
+        .await
+        .expect("fee");
+    assert_eq!(
+        solde_services::get_account(s, alice, edge)
+            .await
+            .expect("edge")
+            .current_balance_minor,
+        Some(MAX_AMOUNT_MINOR)
+    );
 }
 
 // --- Property: random households never leak ---------------------------
