@@ -132,15 +132,24 @@ export function installFakeApi(state: FakeState) {
     );
     const account = state.accounts.find((a) => a.id === accountId);
     if (!account || !entry) return null;
-    // Opening balance plus booked transactions, like the server.
+    // Opening balance plus booked transactions in the account's currency,
+    // exact (bigint), and null when the total is not a safe integer: like
+    // the server.
     const booked = (state.transactions[accountId] ?? [])
-      .filter((tx) => tx.status === 'booked')
-      .reduce((sum, tx) => sum + tx.amount_minor, 0);
+      .filter(
+        (tx) => tx.status === 'booked' && tx.currency === account.currency,
+      )
+      .reduce((sum, tx) => sum + BigInt(tx.amount_minor), 0n);
+    const total =
+      account.balance_minor == null
+        ? null
+        : BigInt(account.balance_minor) + booked;
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
     return {
       ...account,
       permission: entry.permission,
       current_balance_minor:
-        account.balance_minor == null ? null : account.balance_minor + booked,
+        total == null || total > max || total < -max ? null : Number(total),
     };
   };
 
