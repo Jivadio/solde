@@ -648,9 +648,11 @@ async fn accounts(store: Arc<dyn Store>) {
     let orphan = store
         .create_account(checking(home, "Orphan", None), unknown_user())
         .await;
+    // Static messages: the results may carry account data, which must not
+    // be printed, even in a failing test.
     assert!(
         matches!(orphan, Err(StoreError::MissingReference)),
-        "{orphan:?}"
+        "an unknown owner must be a missing reference"
     );
     let listed = store.list_accounts(home).await.expect("list");
     assert_eq!(
@@ -758,7 +760,7 @@ async fn account_access(store: Arc<dyn Store>) {
         let result = store.set_account_access(missing).await;
         assert!(
             matches!(result, Err(StoreError::MissingReference)),
-            "{result:?}"
+            "a grant on an unknown account or user must be a missing reference"
         );
     }
 
@@ -928,9 +930,15 @@ async fn last_owner(store: Arc<dyn Store>) {
         permission: Permission::Write,
     };
     let result = store.set_account_access(demote).await;
-    assert!(matches!(result, Err(StoreError::LastOwner)), "{result:?}");
+    assert!(
+        matches!(result, Err(StoreError::LastOwner)),
+        "demoting the last owner must be refused"
+    );
     let result = store.revoke_account_access(account.id, alice).await;
-    assert!(matches!(result, Err(StoreError::LastOwner)), "{result:?}");
+    assert!(
+        matches!(result, Err(StoreError::LastOwner)),
+        "revoking the last owner must be refused"
+    );
     let grants = store.list_account_access(account.id).await.expect("grants");
     assert_eq!(
         permission_on(&grants, alice, account.id),
@@ -958,7 +966,10 @@ async fn last_owner(store: Arc<dyn Store>) {
             .expect("revoke alice")
     );
     let result = store.revoke_account_access(account.id, bob).await;
-    assert!(matches!(result, Err(StoreError::LastOwner)), "{result:?}");
+    assert!(
+        matches!(result, Err(StoreError::LastOwner)),
+        "revoking the last owner must be refused"
+    );
 }
 
 /// Two owners revoke each other at the same time: one must win, and the
