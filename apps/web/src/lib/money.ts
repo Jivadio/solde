@@ -112,6 +112,9 @@ const fail = (error: ParseAmountError): ParseAmountResult => ({
   error,
 });
 
+/** Grouping characters other than `.` and `,`. */
+const SPACE_GROUP = /[\s\u00a0\u202f'’]+/;
+
 function count(text: string, char: string): number {
   return text.split(char).length - 1;
 }
@@ -134,13 +137,26 @@ export function parseAmount(
 ): ParseAmountResult {
   let text = input.trim();
   if (text === '') return fail('empty');
-  text = text.replace(/[\s\u00a0\u202f'’]/g, '');
 
   let negative = false;
   const sign = text[0];
   if (sign === '-' || sign === MINUS || sign === '+') {
     negative = sign !== '+';
-    text = text.slice(1);
+    text = text.slice(1).trimStart();
+  }
+  // Spaces and apostrophes only group the whole part in threes: `1 240,50`
+  // and `1'240.50`, never `12 34` or `1.2'3`.
+  if (SPACE_GROUP.test(text)) {
+    const [first = '', ...rest] = text.split(SPACE_GROUP);
+    const last = rest.pop() ?? '';
+    if (
+      !/^[0-9]{1,3}$/.test(first) ||
+      rest.some((group) => !/^[0-9]{3}$/.test(group)) ||
+      !/^[0-9]{3}([.,][0-9]*)?$/.test(last)
+    ) {
+      return fail('invalid');
+    }
+    text = text.replace(new RegExp(SPACE_GROUP.source, 'g'), '');
   }
   if (!/^[0-9.,]+$/.test(text) || !/[0-9]/.test(text)) return fail('invalid');
 

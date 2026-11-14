@@ -144,6 +144,8 @@ describe('parseAmount', () => {
     ["1'240.50", { locale: 'de-CH', digits: 2 }, 124050],
     ['12.500', en, 1250],
     ['  7  ', en, 700],
+    ['- 12', en, -1200],
+    ['12 345 678', en, 1234567800],
   ])('parses %j (%o) to %i minor units', (input, options, minor) => {
     expect(parseAmount(input, options)).toEqual({ ok: true, minor });
   });
@@ -198,6 +200,11 @@ describe('parseAmount', () => {
     ['1.2.3,4.5', 'invalid'],
     ['12,34,5', 'invalid'],
     ['1,2345.6', 'invalid'],
+    ['12 34', 'invalid'],
+    ["1.2'3", 'invalid'],
+    ['1 23', 'invalid'],
+    ['1 240 5', 'invalid'],
+    ['12,50 0', 'invalid'],
     ['12.345', 'too_many_decimals'],
     ['0.001', 'too_many_decimals'],
     ['99999999999999999', 'too_large'],
