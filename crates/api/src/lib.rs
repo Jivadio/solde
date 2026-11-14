@@ -116,6 +116,7 @@ pub fn router(store: Arc<dyn Store>, config: ApiConfig) -> Result<Router, InitEr
         .route("/tokens", get(tokens::list).post(tokens::create))
         .route("/tokens/{token_id}", axum::routing::delete(tokens::delete))
         .fallback(not_found)
+        .method_not_allowed_fallback(method_not_allowed)
         .layer(axum::middleware::map_response(api_headers))
         .with_state(AppState::new(store, config)?);
     // Every other `/api` path is a JSON 404 too, so the server's web app
@@ -132,6 +133,13 @@ pub fn router(store: Arc<dyn Store>, config: ApiConfig) -> Result<Router, InitEr
 async fn not_found() -> Response {
     use axum::response::IntoResponse as _;
     error::ApiError::Service(solde_services::ServiceError::NotFound).into_response()
+}
+
+/// A known path with an unsupported method: a JSON 405, like every other
+/// API error.
+async fn method_not_allowed() -> Response {
+    use axum::response::IntoResponse as _;
+    error::ApiError::MethodNotAllowed.into_response()
 }
 
 /// API answers are private and change often: never cache them. And they

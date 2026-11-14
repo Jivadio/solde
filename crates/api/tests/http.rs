@@ -437,6 +437,10 @@ async fn setup_runs_once(api: &TestApi) {
     assert_eq!(meta.body["api_version"], 1);
     assert_eq!(meta.body["bootstrapped"], false);
     assert!(meta.body["min_client_version"].is_string());
+    // A known path with another method is a JSON 405, not an empty body.
+    let wrong_method = api.send(Req::post("/api/v1/meta", json!({}))).await;
+    assert_eq!(wrong_method.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(wrong_method.code(), "method_not_allowed");
 
     // Without the right setup code, nobody can claim the instance.
     let fields = json!({"household_name": "Home", "name": "Mallory Test", "email": "m@example.test", "password": "mallory-fake-password"});

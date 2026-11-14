@@ -53,6 +53,8 @@ pub(crate) enum ApiError {
     InvalidExpiry,
     /// Only a browser session (not an API token) may do this.
     SessionRequired,
+    /// The path exists but not with this HTTP method.
+    MethodNotAllowed,
     /// Something broke on our side; details are logged, not returned.
     Internal,
 }
@@ -161,6 +163,11 @@ impl ApiError {
                 S::FORBIDDEN,
                 "session_required",
                 "sign in with a password to do this",
+            ),
+            ApiError::MethodNotAllowed => (
+                S::METHOD_NOT_ALLOWED,
+                "method_not_allowed",
+                "this method is not allowed on this path",
             ),
             ApiError::Internal => (S::INTERNAL_SERVER_ERROR, "internal", "internal error"),
         }
