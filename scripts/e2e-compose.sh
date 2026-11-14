@@ -36,7 +36,10 @@ jar="$work/cookies"
 body="$work/body"
 headers="$work/headers"
 
-compose() { docker compose -f "$file" -p "$project" "$@"; }
+# An empty env file: a deployment's `.env` next to the compose files must
+# not leak into the throwaway project either.
+: >"$work/empty.env"
+compose() { docker compose --env-file "$work/empty.env" -f "$file" -p "$project" "$@"; }
 
 cleanup() {
   compose down -v --remove-orphans >/dev/null 2>&1 || true
@@ -55,7 +58,7 @@ fail() {
 # api METHOD PATH [JSON]: prints the status code; body in $body.
 api() {
   local method=$1 path=$2 data=${3:-}
-  local args=(-sS -o "$body" -D "$headers" -w '%{http_code}' -X "$method" -b "$jar" -c "$jar")
+  local args=(-sS --max-time 30 -o "$body" -D "$headers" -w '%{http_code}' -X "$method" -b "$jar" -c "$jar")
   if [ -n "$data" ]; then
     args+=(-H 'Content-Type: application/json' --data "$data")
   fi
@@ -77,7 +80,9 @@ compose up -d --build
 
 step "waiting for /healthz (at most 60 s)"
 start=$(date +%s)
-until [ "$(curl -s -o /dev/null -w '%{http_code}' "$base/healthz" || true)" = 200 ]; do
+# Each probe is bounded, so a server that accepts but never answers cannot
+# hold the loop past its deadline.
+until [ "$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "$base/healthz" || true)" = 200 ]; do
   if [ $(($(date +%s) - start)) -ge 60 ]; then
     fail "/healthz did not answer 200 within 60 s"
   fi
