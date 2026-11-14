@@ -502,9 +502,13 @@ function AccountView({ account }: { account: Account }) {
 
   const isOwner = account.permission === 'owner';
   const canWrite = isOwner || account.permission === 'write';
-  const month = transactions.data
-    ? monthTotals(transactions.data, transactions.data.length === limit)
-    : null;
+  // While a larger page loads, the previous one is shown: not a full month.
+  const month =
+    transactions.data && !transactions.isPlaceholderData
+      ? monthTotals(transactions.data, transactions.data.length === limit)
+      : null;
+  // An empty list has its own add action (DESIGN.md: one primary action).
+  const emptyList = transactions.data?.length === 0;
 
   return (
     <>
@@ -524,7 +528,7 @@ function AccountView({ account }: { account: Account }) {
         }
         actions={
           <>
-            {canWrite && (
+            {canWrite && !emptyList && (
               <Button icon="plus" onClick={() => setDialog('add')}>
                 {t('transactions.addTitle')}
               </Button>

@@ -288,6 +288,10 @@ describe('accounts and transactions', () => {
     const balance = screen.getByRole('region', { name: 'Current balance' });
     expect(balance).toHaveTextContent('€1,240.50');
     expect(screen.getByText('No transactions yet')).toBeInTheDocument();
+    // An empty list has one add action, in its empty state.
+    expect(
+      screen.getAllByRole('button', { name: 'Add a transaction' }),
+    ).toHaveLength(1);
 
     await user.click(
       screen.getAllByRole('button', { name: 'Add a transaction' })[0]!,
