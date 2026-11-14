@@ -112,9 +112,11 @@ function json(status: number, body?: unknown): Response {
 const error = (status: number, code: string) =>
   json(status, { code, message: 'fixed english message' });
 
+// Generated ids use their own block (`9000`), so they never collide with
+// the fixture ids (`8000`) above or in the tests.
 let counter = 0;
 const newId = () =>
-  `00000000-0000-7000-8000-${String(++counter).padStart(12, '0')}`;
+  `00000000-0000-7000-9000-${String(++counter).padStart(12, '0')}`;
 
 export function installFakeApi(state: FakeState) {
   const requests: RecordedRequest[] = [];

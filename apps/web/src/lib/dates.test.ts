@@ -32,8 +32,14 @@ describe('todayIso', () => {
 
 describe('formatDateTime', () => {
   it('formats a timestamp by locale', () => {
-    const text = formatDateTime('2026-11-10T10:00:00.000000Z', 'en');
-    expect(text).toMatch(/Nov 10, 2026/);
+    const timestamp = '2026-11-10T10:00:00.000000Z';
+    const text = formatDateTime(timestamp, 'en');
+    // The day depends on the machine's time zone (10 or 11 November).
+    const day = new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(
+      new Date(timestamp),
+    );
+    expect(day).toMatch(/^Nov 1[01], 2026$/);
+    expect(text).toContain(day);
     expect(formatDateTime('nope', 'en')).toBe('nope');
   });
 });

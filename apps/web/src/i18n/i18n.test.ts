@@ -145,6 +145,17 @@ function hardCodedCopy(file: string, source: string): string[] {
     if (ts.isJsxText(node) && HAS_LETTER.test(node.text)) {
       found.push(`${file}: text "${node.text.trim()}"`);
     }
+    // `{'Hello'}` or `{`Hello`}` as a child is text too.
+    if (
+      ts.isJsxExpression(node) &&
+      (ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent)) &&
+      node.expression &&
+      (ts.isStringLiteral(node.expression) ||
+        ts.isNoSubstitutionTemplateLiteral(node.expression)) &&
+      HAS_LETTER.test(node.expression.text)
+    ) {
+      found.push(`${file}: child ${node.getText(sf)}`);
+    }
     if (
       ts.isJsxAttribute(node) &&
       COPY_ATTRIBUTES.has(node.name.getText(sf)) &&
@@ -174,10 +185,10 @@ describe('components', () => {
   it('scanner catches text, copy attributes and string expressions', () => {
     const sample = `const A = () => (
       <p title="Hello" aria-label={'Close'} hint={\`Soon\`} className="sd-x">
-        Hard-coded {t('ok')} · 42
+        Hard-coded {t('ok')} · 42 {'Hello'} {\`Hi\`} {' '}
       </p>
     );`;
-    expect(hardCodedCopy('sample.tsx', sample)).toHaveLength(4);
+    expect(hardCodedCopy('sample.tsx', sample)).toHaveLength(6);
   });
 
   it('take every visible string from the catalogues', () => {
