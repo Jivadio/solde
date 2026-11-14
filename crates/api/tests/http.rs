@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::str::FromStr as _;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use axum::Router;
 use axum::body::Body;
@@ -28,8 +28,14 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tower::ServiceExt as _;
 
 const PG_URL_VAR: &str = "SOLDE_TEST_DATABASE_URL";
-const ALICE_PASSWORD: &str = "alice-fake-password";
-const BOB_PASSWORD: &str = "bob-fake-password-2";
+
+/// A fake password, different on every call.
+fn fake_password() -> String {
+    uuid::Uuid::now_v7().to_string()
+}
+/// Fake passwords, random per run: no literal credentials in the code.
+static ALICE_PASSWORD: LazyLock<String> = LazyLock::new(fake_password);
+static BOB_PASSWORD: LazyLock<String> = LazyLock::new(fake_password);
 /// Fake IBAN (repository convention: `FR76`, zeros, valid checksum).
 const FAKE_IBAN: &str = "FR76 0000 0000 0000 0000 0000 000";
 
@@ -273,8 +279,7 @@ impl TestApi {
             for secret in &secrets {
                 assert!(
                     !body.contains(secret.as_str()),
-                    "a response body leaked a secret ({} chars)",
-                    secret.len()
+                    "a response body leaked a secret"
                 );
             }
         }
@@ -304,7 +309,7 @@ impl TestApi {
                     "household_name": "Test home",
                     "name": "Alice Test",
                     "email": "alice@example.test",
-                    "password": ALICE_PASSWORD,
+                    "password": ALICE_PASSWORD.as_str(),
                 }),
             ))
             .await;
@@ -328,7 +333,7 @@ impl TestApi {
                     "token": token,
                     "name": "Bob Test",
                     "email": "bob@example.test",
-                    "password": BOB_PASSWORD,
+                    "password": BOB_PASSWORD.as_str(),
                 }),
             ))
             .await;
@@ -485,20 +490,28 @@ async fn setup_runs_once(api: &TestApi) {
 async fn login_logout(api: &TestApi) {
     api.setup_alice().await;
     let wrong = api
-        .login("alice@example.test", "not-the-password", "192.0.2.20:1")
+        .login("alice@example.test", &fake_password(), "192.0.2.20:1")
         .await;
     assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
     assert_eq!(wrong.code(), "invalid_credentials");
     assert!(wrong.headers.get(header::SET_COOKIE).is_none());
     let unknown = api
-        .login("nobody@example.test", ALICE_PASSWORD, "192.0.2.20:1")
+        .login(
+            "nobody@example.test",
+            ALICE_PASSWORD.as_str(),
+            "192.0.2.20:1",
+        )
         .await;
     assert_eq!(unknown.status, StatusCode::UNAUTHORIZED);
     assert_eq!(unknown.body, wrong.body, "unknown email looks the same");
 
     // Emails are matched case-insensitively.
     let ok = api
-        .login(" Alice@Example.TEST ", ALICE_PASSWORD, "192.0.2.20:1")
+        .login(
+            " Alice@Example.TEST ",
+            ALICE_PASSWORD.as_str(),
+            "192.0.2.20:1",
+        )
         .await;
     assert_eq!(ok.status, StatusCode::OK, "{:?}", ok.body);
     assert_eq!(ok.body["user"]["name"], "Alice Test");
@@ -547,7 +560,7 @@ async fn session_cookie_flags(api: &TestApi) {
                 "household_name": "Test home",
                 "name": "Alice Test",
                 "email": "alice@example.test",
-                "password": ALICE_PASSWORD,
+                "password": ALICE_PASSWORD.as_str(),
             }),
         ))
         .await;
@@ -579,7 +592,11 @@ async fn insecure_cookies_drop_secure_only() {
     run(Db::Sqlite, config, async |api: &TestApi| {
         api.setup_alice().await;
         let res = api
-            .login("alice@example.test", ALICE_PASSWORD, "192.0.2.30:1")
+            .login(
+                "alice@example.test",
+                ALICE_PASSWORD.as_str(),
+                "192.0.2.30:1",
+            )
             .await;
         let set = res.set_cookie();
         assert!(!set.contains("Secure"), "{set}");
@@ -618,7 +635,7 @@ async fn rate_limit_ignores_forwarded_for_without_trusted_proxy(api: &TestApi) {
         .send(
             Req::post(
                 "/api/v1/auth/login",
-                json!({"email": "alice@example.test", "password": ALICE_PASSWORD}),
+                json!({"email": "alice@example.test", "password": ALICE_PASSWORD.as_str()}),
             )
             .peer("192.0.2.40:2")
             .forwarded_for("198.51.100.99"),
@@ -637,7 +654,11 @@ async fn rate_limit_ignores_forwarded_for_without_trusted_proxy(api: &TestApi) {
     assert!((1..=60).contains(&retry));
     // Another client is unaffected.
     let other = api
-        .login("alice@example.test", ALICE_PASSWORD, "192.0.2.41:1")
+        .login(
+            "alice@example.test",
+            ALICE_PASSWORD.as_str(),
+            "192.0.2.41:1",
+        )
         .await;
     assert_eq!(other.status, StatusCode::OK);
 }
@@ -765,15 +786,19 @@ async fn ac2_visibility_and_permissions(api: &TestApi) {
     assert!(!list.body.to_string().contains("Alice private"));
 
     // Alice's private account answers 404 to Bob, like a missing one.
-    for path in [
+    for (i, path) in [
         format!("/api/v1/accounts/{private}"),
         format!("/api/v1/accounts/{private}/transactions"),
         format!("/api/v1/accounts/{private}/access"),
         "/api/v1/accounts/0190a6f0-0000-7000-8000-000000000000".to_owned(),
         "/api/v1/accounts/not-an-id".to_owned(),
-    ] {
-        let res = api.send(Req::get(&path).cookie(&bob)).await;
-        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
+    ]
+    .iter()
+    .enumerate()
+    {
+        // The index, not the path: paths carry account ids.
+        let res = api.send(Req::get(path).cookie(&bob)).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "path #{i}");
         assert_eq!(res.code(), "not_found");
     }
     let res = api
@@ -810,25 +835,31 @@ async fn ac2_visibility_and_permissions(api: &TestApi) {
         .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
     assert_eq!(res.code(), "forbidden");
-    for (method, path) in [
+    for (i, (method, path)) in [
         (Method::DELETE, format!("/api/v1/accounts/{joint}")),
         (Method::GET, format!("/api/v1/accounts/{joint}/access")),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let res = api
             .send(Req::new(method, &path).cookie(&bob).json(json!({})))
             .await;
-        assert_eq!(res.status, StatusCode::FORBIDDEN, "{path}");
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "path #{i}");
     }
 
     // The admin role grants no visibility: Alice cannot see Bob's account.
     let list = api.send(Req::get("/api/v1/accounts").cookie(&alice)).await;
     assert!(!list.body.to_string().contains(&bob_private));
-    for path in [
+    for (i, path) in [
         format!("/api/v1/accounts/{bob_private}"),
         format!("/api/v1/accounts/{bob_private}/transactions"),
-    ] {
-        let res = api.send(Req::get(&path).cookie(&alice)).await;
-        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
+    ]
+    .iter()
+    .enumerate()
+    {
+        let res = api.send(Req::get(path).cookie(&alice)).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "path #{i}");
     }
 
     // Upgraded to Write, Bob can record transactions on the joint account.
@@ -1169,14 +1200,17 @@ async fn last_owner_and_validation(api: &TestApi) {
         .oneshot(
             Request::post("/api/v1/auth/login")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(format!("{{\"password\": \"{ALICE_PASSWORD}\"")))
+                .body(Body::from(format!(
+                    "{{\"password\": \"{}\"",
+                    ALICE_PASSWORD.as_str()
+                )))
                 .expect("request"),
         )
         .await
         .expect("response");
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     let body = res.into_body().collect().await.expect("body").to_bytes();
-    assert!(!String::from_utf8_lossy(&body).contains(ALICE_PASSWORD));
+    assert!(!String::from_utf8_lossy(&body).contains(ALICE_PASSWORD.as_str()));
 }
 
 /// Bob learns nothing from an IBAN Alice holds privately: he gets the same
@@ -1246,7 +1280,7 @@ async fn minor_digits_follow_iso_4217(api: &TestApi) {
                 .cookie(&alice),
             )
             .await;
-        assert_eq!(account.status, StatusCode::CREATED, "{:?}", account.body);
+        assert_eq!(account.status, StatusCode::CREATED, "{currency}");
         assert_eq!(account.body["minor_digits"], digits, "{currency}");
         let id = account.body["id"].as_str().expect("id");
         let path = format!("/api/v1/accounts/{id}/transactions");
