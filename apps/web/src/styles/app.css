@@ -482,7 +482,8 @@ select.sd-input {
 
 .sd-segmented__option input {
   position: absolute;
-  inset: 0;
+  /* The option shows 32 px, but its target is 44 px (DESIGN.md). */
+  inset: calc((var(--control-sm) - var(--control-md)) / 2) 0;
   opacity: 0;
   margin: 0;
   cursor: pointer;
