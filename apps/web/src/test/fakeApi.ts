@@ -42,6 +42,8 @@ export interface FakeState {
   /** Invitation tokens that `/invitations/accept` takes (once each). */
   inviteTokens: string[];
   tokens: ApiToken[];
+  /** When set, `/auth/logout` fails with a 500 (session left open). */
+  failLogout?: boolean;
 }
 
 export const JANE: Member = {
@@ -203,6 +205,7 @@ export function installFakeApi(state: FakeState) {
     if (!current) return error(401, 'unauthorized');
 
     if (method === 'POST' && path === '/auth/logout') {
+      if (state.failLogout) return error(500, 'internal');
       state.session = null;
       return json(204);
     }

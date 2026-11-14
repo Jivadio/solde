@@ -181,6 +181,55 @@ describe('first launch', () => {
   });
 });
 
+describe('end of a session', () => {
+  const PRIVATE: Account = {
+    ...JOINT,
+    id: '00000000-0000-7000-8000-0000000000a2',
+    name: 'Jane private savings',
+  };
+
+  it('drops the previous member’s data when the session expires', async () => {
+    const state = householdState({
+      session: JANE.user.id,
+      accounts: [PRIVATE],
+      access: {
+        [PRIVATE.id]: [{ user_id: JANE.user.id, permission: 'owner' }],
+      },
+    });
+    installFakeApi(state);
+    const user = userEvent.setup();
+    renderApp('/accounts');
+    expect(await screen.findByText(PRIVATE.name)).toBeInTheDocument();
+
+    // The server ends the session; the next call answers 401.
+    state.session = null;
+    await user.click(screen.getByRole('link', { name: 'API tokens' }));
+    await screen.findByRole('heading', { name: 'Sign in' });
+
+    await user.type(screen.getByLabelText('Email'), JOHN.email);
+    await user.type(screen.getByLabelText('Password'), JOHN.password);
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    // Back where the 401 happened, then to the accounts list.
+    await screen.findByRole('heading', { name: 'API tokens' });
+    await user.click(screen.getByRole('link', { name: 'Accounts' }));
+    await screen.findByRole('heading', { name: 'Accounts' });
+    expect(screen.queryByText(PRIVATE.name)).not.toBeInTheDocument();
+    expect(await screen.findByText('No accounts yet')).toBeInTheDocument();
+  });
+
+  it('stays signed in, with an error, when signing out fails', async () => {
+    installFakeApi(householdState({ session: JANE.user.id, failLogout: true }));
+    const user = userEvent.setup();
+    const { router } = renderApp('/accounts');
+    await screen.findByRole('heading', { name: 'Accounts' });
+    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Something went wrong on the server.',
+    );
+    expect(router.state.location.pathname).toBe('/accounts');
+  });
+});
+
 describe('accounts and transactions', () => {
   it('adds an account, then a transaction typed with a decimal comma', async () => {
     const user = userEvent.setup();

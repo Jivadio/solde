@@ -16,8 +16,9 @@ import { createAppRouter, type AppRouter } from './router';
 
 /**
  * Builds the query cache and router. When a signed-in call answers 401
- * (session expired or revoked), the cached member is cleared and the
- * guards send the person back to the login screen.
+ * (session expired or revoked), everything cached for that member is
+ * dropped and the guards send the person back to the login screen, so the
+ * next member to sign in in this tab never sees the previous one's data.
  */
 export function createApp(history: RouterHistory = createHashHistory()) {
   // The router is created after the query client, which needs to reach it.
@@ -28,6 +29,9 @@ export function createApp(history: RouterHistory = createHashHistory()) {
       error.status === 401 &&
       queryClient.getQueryData(meQuery.queryKey)
     ) {
+      queryClient.removeQueries({
+        predicate: ({ queryKey }) => queryKey[0] !== 'meta',
+      });
       queryClient.setQueryData(meQuery.queryKey, null);
       void holder.router?.invalidate();
     }

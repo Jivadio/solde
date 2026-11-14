@@ -3,9 +3,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useNavigate } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
-import { api, call } from '../api/client';
+import { ApiError, api, call } from '../api/client';
+import { errorMessage } from '../api/errors';
 import { meQuery } from '../api/queries';
 import { Button } from '../components/Button';
+import { Notice } from '../components/Display';
 import { Icon } from '../components/Icon';
 import { Wordmark } from './common';
 
@@ -15,14 +17,21 @@ export function AppLayout() {
   const navigate = useNavigate();
   const { data: me } = useQuery(meQuery);
 
+  // Local state is cleared only once the server has closed the session.
+  // A 401 means it is already closed (the app-wide handler signs out); any
+  // other failure keeps the person here with an error, and the button
+  // retries.
   const logout = useMutation({
     mutationFn: () => call(api.POST('/api/v1/auth/logout')),
-    onSettled: async () => {
+    onSuccess: async () => {
       queryClient.removeQueries();
       queryClient.setQueryData(meQuery.queryKey, null);
       await navigate({ to: '/login', search: {} });
     },
   });
+  const logoutFailed =
+    logout.isError &&
+    !(logout.error instanceof ApiError && logout.error.status === 401);
 
   return (
     <div className="sd-shell">
@@ -73,6 +82,9 @@ export function AppLayout() {
         </div>
       </header>
       <main id="main" className="sd-main" tabIndex={-1}>
+        {logoutFailed && (
+          <Notice tone="negative">{errorMessage(t, logout.error)}</Notice>
+        )}
         <Outlet />
       </main>
     </div>
