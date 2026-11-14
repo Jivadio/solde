@@ -86,8 +86,7 @@ With SQLite, stop the server for a moment so the database file is consistent, th
 ```sh
 docker compose -f compose.sqlite.yaml stop server
 docker run --rm --volumes-from "$(docker compose -f compose.sqlite.yaml ps -aq server)":ro \
-  -v "$PWD":/backup alpine:3.22 \
-  tar czf /backup/solde-data-$(date +%F).tgz -C /data .
+  alpine:3.22 tar czf - -C /data . > solde-data-$(date +%F).tgz
 docker compose -f compose.sqlite.yaml start server
 ```
 
@@ -106,7 +105,7 @@ To restore a backed-up key on a new machine, or to manage the key yourself:
    sudo chmod 0755 /srv/solde-keys && sudo chmod 0400 /srv/solde-keys/master.key
    ```
 
-   The directory stays listable so `keygen` can see that a key is there; only the server's user can read the key itself.
+   The directory stays listable so `keygen` can see that a key is there; only the server's user can read the key itself. With rootless Docker or `userns-remap`, container UID 65532 is a different UID on the host (see `/etc/subuid` and `/etc/subgid`): use that host UID and GID instead of `65532:65532`.
 
 2. Start Solde with `SOLDE_KEYS_SOURCE=/srv/solde-keys`. `keygen` sees the key and leaves it untouched.
 
