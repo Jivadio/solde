@@ -792,6 +792,8 @@ describe('invitations and tokens', () => {
     expect(await screen.findByLabelText('API token')).toHaveValue(
       'fake-api-token-secret',
     );
+    // The secret replaced the form: focus moves to it.
+    expect(screen.getByLabelText('API token')).toHaveFocus();
     expect(
       requests.find((r) => r.path === '/tokens' && r.method === 'POST'),
     ).toMatchObject({ body: { name: 'Laptop', expires_in_days: null } });

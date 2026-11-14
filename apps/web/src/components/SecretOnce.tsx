@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // A secret (invitation link, API token) the server returns only once.
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from './Button';
 import { TextField } from './Fields';
@@ -23,6 +23,12 @@ export function SecretOnce({
 }: SecretOnceProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState<'idle' | 'done' | 'failed'>('idle');
+  const field = useRef<HTMLInputElement>(null);
+  // Inside a dialog the form is replaced by the secret: move focus to it,
+  // so screen readers announce the new field (and the dialog title).
+  useEffect(() => {
+    if (!title) field.current?.focus();
+  }, [title]);
 
   async function copy() {
     try {
@@ -42,6 +48,7 @@ export function SecretOnce({
       )}
       <div className="body">{children}</div>
       <TextField
+        ref={field}
         label={label}
         value={value}
         readOnly
