@@ -85,8 +85,9 @@ With SQLite, stop the server for a moment so the database file is consistent, th
 
 ```sh
 docker compose -f compose.sqlite.yaml stop server
+backup=solde-data-$(date +%F).tgz
 docker run --rm --volumes-from "$(docker compose -f compose.sqlite.yaml ps -aq server)":ro \
-  alpine:3.22 tar czf - -C /data . > solde-data-$(date +%F).tgz
+  alpine:3.22 tar czf - -C /data . > "$backup.tmp" && mv "$backup.tmp" "$backup"
 docker compose -f compose.sqlite.yaml start server
 ```
 
