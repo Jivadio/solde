@@ -145,6 +145,9 @@ describe('parseAmount', () => {
     ['12.500', en, 1250],
     ['  7  ', en, 700],
     ['- 12', en, -1200],
+    ['1 234,50', en, 123450],
+    ['1 234,500', en, 123450],
+    ['1 234.500', fr, 123450],
     ['12 345 678', en, 1234567800],
   ])('parses %j (%o) to %i minor units', (input, options, minor) => {
     expect(parseAmount(input, options)).toEqual({ ok: true, minor });

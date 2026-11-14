@@ -114,6 +114,7 @@ const fail = (error: ParseAmountError): ParseAmountResult => ({
 
 /** Grouping characters other than `.` and `,`. */
 const SPACE_GROUP = /[\s\u00a0\u202f'’]+/;
+const SPACE_GROUPS = /[\s\u00a0\u202f'’]+/g;
 
 function count(text: string, char: string): number {
   return text.split(char).length - 1;
@@ -145,7 +146,9 @@ export function parseAmount(
     text = text.slice(1).trimStart();
   }
   // Spaces and apostrophes only group the whole part in threes: `1 240,50`
-  // and `1'240.50`, never `12 34` or `1.2'3`.
+  // and `1'240.50`, never `12 34` or `1.2'3`. A `.` or `,` after them can
+  // only be the decimal separator.
+  let spaceDecimal: string | null = null;
   if (SPACE_GROUP.test(text)) {
     const [first = '', ...rest] = text.split(SPACE_GROUP);
     const last = rest.pop() ?? '';
@@ -156,7 +159,8 @@ export function parseAmount(
     ) {
       return fail('invalid');
     }
-    text = text.replace(new RegExp(SPACE_GROUP.source, 'g'), '');
+    spaceDecimal = /[.,]/.exec(last)?.[0] ?? null;
+    text = text.replace(SPACE_GROUPS, '');
   }
   if (!/^[0-9.,]+$/.test(text) || !/[0-9]/.test(text)) return fail('invalid');
 
@@ -164,7 +168,9 @@ export function parseAmount(
   const commas = count(text, ',');
   let decimalSep: string | null = null;
   let groupSep: string | null = null;
-  if (dots > 0 && commas > 0) {
+  if (spaceDecimal !== null) {
+    decimalSep = spaceDecimal;
+  } else if (dots > 0 && commas > 0) {
     decimalSep = text.lastIndexOf('.') > text.lastIndexOf(',') ? '.' : ',';
     groupSep = decimalSep === '.' ? ',' : '.';
     if (count(text, decimalSep) > 1) return fail('invalid');
