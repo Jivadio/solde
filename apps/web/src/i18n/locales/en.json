@@ -13,16 +13,21 @@
     "copy": "Copy",
     "copied": "Copied.",
     "copyFailed": "Couldn’t copy. Select the text and copy it.",
-    "done": "Done"
+    "done": "Done",
+    "close": "Close",
+    "actions": "Actions"
   },
   "nav": {
     "label": "Main",
-    "home": "Solde, accounts",
+    "home": "Solde, overview",
     "skipToContent": "Skip to content",
     "accounts": "Accounts",
     "invitations": "Invitations",
     "tokens": "API tokens",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "overview": "Overview",
+    "household": "Household",
+    "memberMenu": "Account menu for {name}"
   },
   "forms": {
     "yourName": "Your name",
@@ -40,7 +45,7 @@
     "title": "Set up Solde",
     "intro": "Create your household and your admin account. You can invite the others afterwards.",
     "code": "Setup code",
-    "codeHint": "Your Solde server printed it in its log when it started, after “setup code:”. With Docker Compose, run: docker compose logs server",
+    "codeHint": "Your Solde server printed it in its log when it started, after “setup code:”. With Docker Compose, run:",
     "householdName": "Household name",
     "householdHint": "For example, “Doe family”.",
     "submit": "Create the household",
@@ -79,9 +84,14 @@
     "subtitle": "Accounts you own or that are shared with you.",
     "add": "Add an account",
     "listTitle": "{count, plural, one {# account} other {# accounts}}",
-    "noBalance": "No balance",
     "emptyTitle": "No accounts yet",
-    "emptyBody": "Add an account, then record its transactions by hand."
+    "emptyBody": "Add an account with its current balance, then record its transactions by hand.",
+    "balanceUnknown": "Balance unknown",
+    "columns": {
+      "account": "Account",
+      "access": "Your access",
+      "balance": "Balance"
+    }
   },
   "accountKinds": {
     "checking": "Current account",
@@ -121,23 +131,32 @@
     "failed": "The account wasn’t added",
     "errors": {
       "nameRequired": "Enter a name for the account."
-    }
+    },
+    "balance": "Current balance",
+    "balanceHint": "What the account holds today. Use a minus sign for an overdraft or a loan. Leave it empty if you don’t know.",
+    "added": "Account added."
   },
   "account": {
-    "balance": "Opening balance",
-    "noBalance": "No balance recorded",
-    "details": "Manual account in {currency}",
-    "detailsWithIban": "Manual account in {currency} · {iban}",
+    "details": "Account details",
     "manageSharing": "Manage sharing",
-    "readOnlyTitle": "View only",
-    "readOnlyBody": "You can see this account. Ask an owner for edit access to add transactions.",
+    "readOnlyBody": "View only: ask an owner for edit access to add transactions.",
     "notFoundTitle": "Account not found",
-    "notFoundBody": "This account doesn’t exist or isn’t shared with you."
+    "notFoundBody": "This account doesn’t exist or isn’t shared with you.",
+    "currentBalance": "Current balance",
+    "openingBalance": "Opening balance {amount}",
+    "openingBalanceLabel": "Opening balance",
+    "monthIn": "Money in this month",
+    "monthOut": "Money out this month",
+    "balanceUnknownTitle": "Balance unknown",
+    "balanceUnknownBody": "This account was added without its current balance, so Solde can’t tell where it stands. Its transactions are listed below.",
+    "name": "Name",
+    "noIban": "None",
+    "notRecorded": "Not recorded",
+    "yourAccess": "Your access",
+    "moreActions": "More actions for {account}"
   },
   "transactions": {
     "title": "Transactions",
-    "empty": "No transactions yet.",
-    "pendingOn": "Pending · {date}",
     "showingLatest": "{count, plural, one {Showing the latest transaction.} other {Showing the latest # transactions.}}",
     "loadMore": "Load more",
     "addTitle": "Add a transaction",
@@ -159,7 +178,19 @@
       "amountZero": "Enter an amount greater than zero.",
       "labelRequired": "Enter a label.",
       "dateRequired": "Choose a date."
-    }
+    },
+    "pending": "Pending",
+    "caption": "Transactions of {account}, newest first",
+    "columns": {
+      "description": "Description",
+      "status": "Status",
+      "amount": "Amount"
+    },
+    "addSubtitle": "On {account}. It counts in the balance once added.",
+    "emptyTitle": "No transactions yet",
+    "emptyBody": "Add the account’s transactions as they happen. Each one moves the current balance.",
+    "emptyBodyReadOnly": "Transactions added by the account’s owners will show up here.",
+    "accountOnDay": "{account} · {date}"
   },
   "sharing": {
     "title": "Sharing",
@@ -168,7 +199,6 @@
     "you": "{name} (you)",
     "unknownMember": "Former member",
     "permissionFor": "Access for {name}",
-    "revoke": "Remove",
     "revokeConfirm": "Remove access",
     "confirmRevoke": "Remove {name}’s access? They won’t see this account any more.",
     "confirmRevokeSelf": "Remove your own access? You won’t see this account any more.",
@@ -179,7 +209,13 @@
     "everyoneHasAccess": "Everyone in the household already has access.",
     "failed": "Access wasn’t changed",
     "ownersOnlyTitle": "Only owners manage sharing",
-    "ownersOnlyBody": "Ask an owner of this account to change who can see it."
+    "ownersOnlyBody": "Ask an owner of this account to change who can see it.",
+    "columns": {
+      "person": "Person",
+      "access": "Access"
+    },
+    "moreActions": "More actions for {name}",
+    "grantSubtitle": "Choose who to add and what they can do. You can change it later."
   },
   "invitations": {
     "title": "Invitations",
@@ -192,12 +228,20 @@
     "createdBody": "Send this link to the person you invite. It works once and expires on {date}. Solde won’t show it again.",
     "link": "Invitation link",
     "listTitle": "Sent invitations",
-    "empty": "No invitations yet.",
     "accepted": "Accepted",
     "expired": "Expired",
     "pending": "Waiting",
-    "acceptedOn": "Accepted on {date}",
-    "expiresOn": "Expires on {date}"
+    "acceptedOn": "Accepted {date}",
+    "expiresOn": "Expires {date}",
+    "createSubtitle": "Choose the new member’s role. You’ll get a link to send them.",
+    "emptyTitle": "No invitations yet",
+    "emptyBody": "Invite the people you share money with. Each one sees only their own accounts and the ones shared with them.",
+    "acceptedBy": "Accepted by {name}",
+    "columns": {
+      "invitation": "Invitation",
+      "status": "Status",
+      "date": "Date"
+    }
   },
   "tokens": {
     "title": "API tokens",
@@ -214,26 +258,33 @@
     "createdBody": "Scripts send it in the {header} header. Solde won’t show it again.",
     "secret": "API token",
     "listTitle": "Your tokens",
-    "empty": "No API tokens yet.",
-    "createdOn": "Created {date}",
-    "expiresOn": "Expires {date}",
     "neverExpires": "Never expires",
-    "lastUsed": "Last used {date}",
     "neverUsed": "Never used",
-    "delete": "Delete",
+    "delete": "Delete the token",
     "deleteConfirm": "Delete the token",
     "confirmDelete": "Delete “{name}”? Scripts using it stop working.",
     "deleteFailed": "The token wasn’t deleted",
     "errors": {
       "nameRequired": "Enter a name for the token."
-    }
+    },
+    "emptyTitle": "No API tokens yet",
+    "emptyBody": "Create a token when a script or another app needs to read your accounts. You can delete it at any time.",
+    "columns": {
+      "name": "Name",
+      "created": "Created",
+      "expires": "Expires",
+      "lastUsed": "Last used"
+    },
+    "moreActions": "More actions for {name}",
+    "deleted": "Token deleted."
   },
   "system": {
     "errorTitle": "Solde can’t reach the server",
     "errorIntro": "Check that the Solde server is running, then try again.",
     "notFoundTitle": "Page not found",
     "notFoundIntro": "This page doesn’t exist.",
-    "backHome": "Go to accounts"
+    "backHome": "Go to the overview",
+    "notFoundBody": "The link may be old, or the page may have moved."
   },
   "errors": {
     "already_bootstrapped": "This Solde is already set up. Sign in instead.",
@@ -265,5 +316,18 @@
     "session_required": "Sign in with your password to do this.",
     "unauthorized": "Your session has ended. Sign in again.",
     "unknown": "Something went wrong. Try again."
+  },
+  "overview": {
+    "title": "Overview",
+    "total": "Total balance",
+    "accountsCounted": "{count, plural, one {# account} other {# accounts}}",
+    "unknownLeftOut": "{count, plural, one {# account without a known balance isn’t counted.} other {# accounts without a known balance aren’t counted.}}",
+    "noTotalTitle": "No total yet",
+    "noTotalBody": "None of your accounts has a known balance. Add an account with its current balance to see your total here.",
+    "seeAll": "See all accounts",
+    "latest": "Latest transactions",
+    "noTransactions": "No transactions yet. Open an account to add one.",
+    "emptyTitle": "Start with your first account",
+    "emptyBody": "Solde reads your accounts and never moves money. For now, you add accounts and their transactions by hand; bank connections come later."
   }
 }

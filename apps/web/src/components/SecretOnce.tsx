@@ -6,7 +6,8 @@ import { Button } from './Button';
 import { TextField } from './Fields';
 
 interface SecretOnceProps {
-  title: string;
+  /** Omitted inside a dialog, whose title says it. */
+  title?: string;
   label: string;
   value: string;
   children: ReactNode;
@@ -34,9 +35,11 @@ export function SecretOnce({
 
   return (
     <div className="sd-secret">
-      <p className="heading" role="status">
-        {title}
-      </p>
+      {title && (
+        <p className="heading" role="status">
+          {title}
+        </p>
+      )}
       <div className="body">{children}</div>
       <TextField
         label={label}

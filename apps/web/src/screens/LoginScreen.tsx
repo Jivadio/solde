@@ -20,7 +20,7 @@ export function safeRedirect(target: string | undefined): string {
     target.startsWith('/login') ||
     target.startsWith('/setup')
   ) {
-    return '/accounts';
+    return '/';
   }
   return target;
 }

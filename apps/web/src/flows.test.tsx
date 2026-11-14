@@ -85,15 +85,15 @@ describe('route guard', () => {
   it('skips login when already signed in', async () => {
     installFakeApi(householdState({ session: JANE.user.id }));
     const { router } = renderApp('/login');
-    await screen.findByRole('heading', { name: 'Accounts' });
-    expect(router.state.location.pathname).toBe('/accounts');
+    await screen.findByRole('heading', { name: 'Overview', level: 1 });
+    expect(router.state.location.pathname).toBe('/');
   });
 
   it('keeps members out of the admin-only invitations screen', async () => {
     installFakeApi(householdState({ session: JOHN.user.id }));
     const { router } = renderApp('/invitations');
-    await screen.findByRole('heading', { name: 'Accounts' });
-    expect(router.state.location.pathname).toBe('/accounts');
+    await screen.findByRole('heading', { name: 'Overview', level: 1 });
+    expect(router.state.location.pathname).toBe('/');
     expect(
       screen.queryByRole('link', { name: 'Invitations' }),
     ).not.toBeInTheDocument();
@@ -143,9 +143,11 @@ describe('first launch', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { name: 'Accounts' }),
+      await screen.findByRole('heading', { name: 'Overview', level: 1 }),
     ).toBeInTheDocument();
-    expect(screen.getByText('No accounts yet')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Start with your first account' }),
+    ).toBeInTheDocument();
     const setup = requests.findLast((r) => r.path === '/setup');
     expect(setup).toMatchObject({
       method: 'POST',
@@ -158,7 +160,10 @@ describe('first launch', () => {
       },
     });
 
-    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+    await user.click(
+      screen.getAllByRole('button', { name: 'Account menu for Jane Doe' })[0]!,
+    );
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     await screen.findByRole('heading', { name: 'Sign in' });
     expect(requests.find((r) => r.path === '/auth/logout')).toMatchObject({
       contentType: 'application/json',
@@ -176,7 +181,7 @@ describe('first launch', () => {
     await user.type(screen.getByLabelText('Password'), JANE.password);
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(
-      await screen.findByRole('heading', { name: 'Accounts' }),
+      await screen.findByRole('heading', { name: 'Overview', level: 1 }),
     ).toBeInTheDocument();
   });
 });
@@ -222,7 +227,10 @@ describe('end of a session', () => {
     const user = userEvent.setup();
     const { router } = renderApp('/accounts');
     await screen.findByRole('heading', { name: 'Accounts' });
-    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+    await user.click(
+      screen.getAllByRole('button', { name: 'Account menu for Jane Doe' })[0]!,
+    );
+    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Something went wrong on the server.',
     );
@@ -231,22 +239,41 @@ describe('end of a session', () => {
 });
 
 describe('accounts and transactions', () => {
-  it('adds an account, then a transaction typed with a decimal comma', async () => {
+  it('adds an account with its balance, then a transaction typed with a decimal comma', async () => {
     const user = userEvent.setup();
     const { requests } = installFakeApi(
       householdState({ session: JANE.user.id }),
     );
     renderApp('/accounts');
 
-    await user.click(
-      (await screen.findAllByRole('link', { name: 'Add an account' }))[0]!,
+    // The empty list has one "Add an account" button, not two.
+    const add = await screen.findAllByRole('button', {
+      name: 'Add an account',
+    });
+    expect(add).toHaveLength(1);
+    await user.click(add[0]!);
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Add an account',
+    });
+    expect(within(dialog).getByLabelText('Account name')).toHaveFocus();
+    await user.type(
+      within(dialog).getByLabelText('Account name'),
+      'Savings book',
     );
-    await screen.findByRole('heading', { name: 'Add an account' });
-    await user.type(screen.getByLabelText('Account name'), 'Savings book');
-    await user.selectOptions(screen.getByLabelText('Type'), 'savings');
-    await user.click(screen.getByRole('button', { name: 'Add the account' }));
+    await user.selectOptions(within(dialog).getByLabelText('Type'), 'savings');
+    await user.type(
+      within(dialog).getByLabelText(/Current balance/),
+      '1 240,50',
+    );
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Add the account' }),
+    );
 
-    await screen.findByRole('heading', { name: 'Savings book' });
+    await screen.findByRole('heading', { name: 'Savings book', level: 1 });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '' })).toHaveTextContent(
+      'Account added.',
+    );
     expect(
       requests.find((r) => r.path === '/accounts' && r.method === 'POST'),
     ).toMatchObject({
@@ -255,20 +282,30 @@ describe('accounts and transactions', () => {
         kind: 'savings',
         currency: 'EUR',
         iban: null,
+        balance_minor: 124050,
       },
     });
-    expect(screen.getByText('No balance recorded')).toBeInTheDocument();
-    expect(screen.getByText('No transactions yet.')).toBeInTheDocument();
+    const balance = screen.getByRole('region', { name: 'Current balance' });
+    expect(balance).toHaveTextContent('€1,240.50');
+    expect(screen.getByText('No transactions yet')).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText('Amount'), '12,5');
-    await user.type(screen.getByLabelText('Label'), 'Bakery');
     await user.click(
-      screen.getByRole('button', { name: 'Add the transaction' }),
+      screen.getAllByRole('button', { name: 'Add a transaction' })[0]!,
+    );
+    const sheet = await screen.findByRole('dialog', {
+      name: 'Add a transaction',
+    });
+    await user.type(within(sheet).getByLabelText('Amount'), '12,5');
+    await user.type(within(sheet).getByLabelText('Label'), 'Bakery');
+    await user.click(
+      within(sheet).getByRole('button', { name: 'Add the transaction' }),
     );
 
-    const list = await screen.findByRole('list');
-    expect(within(list).getByText('Bakery')).toBeInTheDocument();
-    expect(within(list).getByText('−€12.50')).toBeInTheDocument();
+    const table = await screen.findByRole('table', {
+      name: 'Transactions of Savings book, newest first',
+    });
+    expect(within(table).getByText('Bakery')).toBeInTheDocument();
+    expect(within(table).getByText('−€12.50')).toBeInTheDocument();
     expect(
       requests.find(
         (r) => r.path.endsWith('/transactions') && r.method === 'POST',
@@ -276,7 +313,31 @@ describe('accounts and transactions', () => {
     ).toMatchObject({
       body: { amount_minor: -1250, currency: 'EUR', label: 'Bakery' },
     });
-    expect(screen.getByText('Transaction added.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // The balance follows the new transaction.
+    await waitFor(() => expect(balance).toHaveTextContent('€1,228.00'));
+  });
+
+  it('refuses a balance it cannot read, inside the dialog', async () => {
+    const user = userEvent.setup();
+    const { requests } = installFakeApi(
+      householdState({ session: JANE.user.id }),
+    );
+    renderApp('/accounts/new');
+
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Add an account',
+    });
+    await user.type(within(dialog).getByLabelText('Account name'), 'Typo');
+    await user.type(within(dialog).getByLabelText(/Current balance/), '12.345');
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Add the account' }),
+    );
+    expect(
+      within(dialog).getByText('Use at most 2 decimals.'),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/Current balance/)).toHaveFocus();
+    expect(requests.some((r) => r.method === 'POST')).toBe(false);
   });
 
   it('refuses an amount with too many decimals before calling the API', async () => {
@@ -284,6 +345,9 @@ describe('accounts and transactions', () => {
     const { requests } = installFakeApi(sharedHousehold(JANE.user.id));
     renderApp(`/accounts/${JOINT.id}`);
 
+    await user.click(
+      await screen.findByRole('button', { name: 'Add a transaction' }),
+    );
     await user.type(await screen.findByLabelText('Amount'), '1.234');
     await user.type(screen.getByLabelText('Label'), 'Typo');
     await user.click(
@@ -325,13 +389,14 @@ describe('accounts and transactions', () => {
     renderApp('/accounts');
     const plain = (text: string | null) =>
       (text ?? '').replace(/[\u00a0\u202f]/g, ' ');
-    const hufRow = await screen.findByRole('link', { name: /Forint account/ });
-    expect(plain(hufRow.textContent)).toContain('HUF 1,500.00');
-    const iqdRow = screen.getByRole('link', { name: /Dinar account/ });
-    expect(plain(iqdRow.textContent)).toContain('IQD 1.500');
+    const row = (name: RegExp) =>
+      screen.getByRole('link', { name }).closest('tr')!;
+    await screen.findByRole('link', { name: /Forint account/ });
+    expect(plain(row(/Forint account/).textContent)).toContain('HUF 1,500.00');
+    expect(plain(row(/Dinar account/).textContent)).toContain('IQD 1.500');
   });
 
-  it('labels the recorded balance as the opening balance', async () => {
+  it('shows the current balance as the hero, with the opening balance beside it', async () => {
     installFakeApi(
       householdState({
         session: JANE.user.id,
@@ -339,10 +404,45 @@ describe('accounts and transactions', () => {
         access: {
           [JOINT.id]: [{ user_id: JANE.user.id, permission: 'owner' }],
         },
+        transactions: sharedHousehold(JANE.user.id).transactions,
       }),
     );
     renderApp(`/accounts/${JOINT.id}`);
-    expect(await screen.findByText('Opening balance')).toBeInTheDocument();
+    const balance = await screen.findByRole('region', {
+      name: 'Current balance',
+    });
+    expect(balance).toHaveTextContent('€1,197.45');
+    expect(balance).toHaveTextContent('Opening balance €1,240.35');
+  });
+
+  it('never shows an empty hero when the balance is unknown', async () => {
+    installFakeApi(sharedHousehold(JANE.user.id));
+    renderApp(`/accounts/${JOINT.id}`);
+    expect(
+      await screen.findByRole('heading', { name: 'Balance unknown' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('region', { name: 'Current balance' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the full IBAN, grouped, only in the account details', async () => {
+    const user = userEvent.setup();
+    installFakeApi(sharedHousehold(JANE.user.id));
+    renderApp(`/accounts/${JOINT.id}`);
+
+    const more = await screen.findByRole('button', {
+      name: `More actions for ${JOINT.name}`,
+    });
+    expect(screen.queryByText(/FR76/)).not.toBeInTheDocument();
+    await user.click(more);
+    await user.click(screen.getByRole('menuitem', { name: 'Account details' }));
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Account details',
+    });
+    expect(
+      within(dialog).getByText('FR76 0000 0000 0000 0000 0000 000'),
+    ).toBeInTheDocument();
   });
 
   it('shows the latest transactions and loads more on demand', async () => {
@@ -390,15 +490,74 @@ describe('accounts and transactions', () => {
   it('lists accounts without a balance and masks the IBAN', async () => {
     installFakeApi(sharedHousehold(JANE.user.id));
     renderApp('/accounts');
-    const row = await screen.findByRole('link', {
-      name: /Joint current account/,
-    });
-    expect(row).toHaveTextContent('No balance');
+    const row = (
+      await screen.findByRole('link', { name: /Joint current account/ })
+    ).closest('tr')!;
+    expect(row).toHaveTextContent('Balance unknown');
     expect(row).toHaveTextContent('•••• 0000');
     expect(row).not.toHaveTextContent('FR76');
     expect(
-      screen.getByRole('heading', { name: '1 account' }),
+      screen.getByRole('table', { name: '1 account' }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('overview', () => {
+  it('totals each currency apart and counts what it leaves out', async () => {
+    const usd: Account = {
+      ...JOINT,
+      id: '00000000-0000-7000-8000-0000000000c1',
+      name: 'Travel card',
+      kind: 'card',
+      currency: 'USD',
+      iban: null,
+      balance_minor: 5000,
+    };
+    const savings: Account = {
+      ...JOINT,
+      id: '00000000-0000-7000-8000-0000000000c2',
+      name: 'Savings book',
+      kind: 'savings',
+      iban: null,
+      balance_minor: 100000,
+    };
+    const state = sharedHousehold(JANE.user.id);
+    state.accounts = [
+      { ...JOINT, balance_minor: 20000 },
+      usd,
+      savings,
+      {
+        ...savings,
+        id: '00000000-0000-7000-8000-0000000000c3',
+        name: 'Old',
+        balance_minor: null,
+      },
+    ];
+    for (const account of state.accounts.slice(1)) {
+      state.access[account.id] = [
+        { user_id: JANE.user.id, permission: 'owner' },
+      ];
+    }
+    installFakeApi(state);
+    renderApp('/');
+
+    const summary = await screen.findByRole('region', {
+      name: 'Total balance',
+    });
+    // EUR: 200.00 − 42.90 + 1,000.00; USD apart, never converted.
+    expect(summary).toHaveTextContent('€1,157.10');
+    expect(summary).toHaveTextContent('2 accounts');
+    expect(summary).toHaveTextContent('$50.00');
+    expect(summary).toHaveTextContent(
+      '1 account without a known balance isn’t counted.',
+    );
+    expect(
+      await screen.findByRole('table', { name: 'Latest transactions' }),
+    ).toHaveTextContent('Groceries');
+    // One add action on the screen: the dashed card.
+    expect(
+      screen.getAllByRole('button', { name: 'Add an account' }),
+    ).toHaveLength(1);
   });
 });
 
@@ -409,13 +568,24 @@ describe('sharing', () => {
 
     await screen.findByRole('heading', { name: JOINT.name });
     expect(await screen.findByText('Groceries')).toBeInTheDocument();
+    expect(screen.getByText('Can view')).toBeInTheDocument();
     expect(
-      screen.queryByRole('link', { name: 'Manage sharing' }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText('View only')).toBeInTheDocument();
+      screen.getByText(/View only: ask an owner for edit access/),
+    ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Add the transaction' }),
+      screen.queryByRole('button', { name: 'Add a transaction' }),
     ).not.toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole('button', { name: `More actions for ${JOINT.name}` }),
+      );
+    expect(
+      screen.queryByRole('menuitem', { name: 'Manage sharing' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: 'Account details' }),
+    ).toBeInTheDocument();
   });
 
   it('refuses the sharing screen to non-owners, without asking the API', async () => {
@@ -437,8 +607,11 @@ describe('sharing', () => {
     renderApp(`/accounts/${JOINT.id}`);
 
     await user.click(
-      await screen.findByRole('link', { name: 'Manage sharing' }),
+      await screen.findByRole('button', {
+        name: `More actions for ${JOINT.name}`,
+      }),
     );
+    await user.click(screen.getByRole('menuitem', { name: 'Manage sharing' }));
     await screen.findByRole('heading', { name: 'Sharing' });
     expect(await screen.findByText('Jane Doe (you)')).toBeInTheDocument();
 
@@ -457,15 +630,23 @@ describe('sharing', () => {
       body: { permission: 'write' },
     });
 
-    const johnRow = screen.getByText('John Doe').closest('li')!;
-    await user.click(within(johnRow).getByRole('button', { name: 'Remove' }));
+    const menu = screen.getByRole('button', {
+      name: 'More actions for John Doe',
+    });
+    await user.click(menu);
+    await user.click(screen.getByRole('menuitem', { name: 'Remove access' }));
+    const confirm = await screen.findByRole('alertdialog', {
+      name: 'Remove access',
+    });
+    expect(confirm).toHaveTextContent(
+      'Remove John Doe’s access? They won’t see this account any more.',
+    );
+    // Focus starts on the safe choice.
     expect(
-      within(johnRow).getByText(
-        'Remove John Doe’s access? They won’t see this account any more.',
-      ),
-    ).toBeInTheDocument();
+      within(confirm).getByRole('button', { name: 'Cancel' }),
+    ).toHaveFocus();
     await user.click(
-      within(johnRow).getByRole('button', { name: 'Remove access' }),
+      within(confirm).getByRole('button', { name: 'Remove access' }),
     );
     const people = screen.getByRole('region', { name: 'People with access' });
     await waitFor(() =>
@@ -475,10 +656,21 @@ describe('sharing', () => {
       path: `/accounts/${JOINT.id}/access/${JOHN.user.id}`,
       contentType: 'application/json',
     });
-    // John can be given access again.
+    // John can be given access again, from the dialog.
+    await user.click(screen.getByRole('button', { name: 'Give access' }));
+    const grant = await screen.findByRole('dialog', { name: 'Give access' });
     expect(
-      screen.getByRole('option', { name: 'John Doe' }),
+      within(grant).getByRole('option', { name: 'John Doe' }),
     ).toBeInTheDocument();
+    await user.click(
+      within(grant).getByRole('button', { name: 'Give access' }),
+    );
+    await waitFor(() =>
+      expect(state.access[JOINT.id]).toContainEqual({
+        user_id: JOHN.user.id,
+        permission: 'read',
+      }),
+    );
   });
 });
 
@@ -489,6 +681,9 @@ describe('invitations and tokens', () => {
     renderApp('/invitations');
 
     await screen.findByRole('heading', { name: 'Invitations' });
+    await user.click(
+      await screen.findByRole('button', { name: 'Invite someone' }),
+    );
     await user.click(screen.getByRole('radio', { name: 'Admin' }));
     await user.click(
       screen.getByRole('button', { name: 'Create an invitation link' }),
@@ -498,7 +693,7 @@ describe('invitations and tokens', () => {
     expect((link as HTMLInputElement).value).toMatch(
       /#\/join\?token=fake-invitation-token$/,
     );
-    expect(screen.getByText('Admin invitation')).toBeInTheDocument();
+    expect(await screen.findByText('Admin invitation')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Done' }));
     expect(screen.queryByLabelText('Invitation link')).not.toBeInTheDocument();
     expect(screen.queryByText(/fake-invitation-token/)).not.toBeInTheDocument();
@@ -524,7 +719,7 @@ describe('invitations and tokens', () => {
     await user.click(
       screen.getByRole('button', { name: 'Join the household' }),
     );
-    await screen.findByRole('heading', { name: 'Accounts' });
+    await screen.findByRole('heading', { name: 'Overview', level: 1 });
     expect(
       requests.find((r) => r.path === '/invitations/accept'),
     ).toMatchObject({ body: { token: 'replacement-invitation-token' } });
@@ -550,7 +745,7 @@ describe('invitations and tokens', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { name: 'Accounts' }),
+      await screen.findByRole('heading', { name: 'Overview', level: 1 }),
     ).toBeInTheDocument();
     expect(
       requests.find((r) => r.path === '/invitations/accept'),
@@ -588,7 +783,8 @@ describe('invitations and tokens', () => {
     );
     renderApp('/tokens');
 
-    await screen.findByText('No API tokens yet.');
+    await screen.findByText('No API tokens yet');
+    await user.click(screen.getByRole('button', { name: 'Create a token' }));
     await user.type(screen.getByLabelText('Token name'), 'Laptop');
     await user.selectOptions(screen.getByLabelText('Expires'), 'never');
     await user.click(screen.getByRole('button', { name: 'Create the token' }));
@@ -604,15 +800,96 @@ describe('invitations and tokens', () => {
       screen.queryByDisplayValue('fake-api-token-secret'),
     ).not.toBeInTheDocument();
 
-    const row = (await screen.findByText('Laptop')).closest('li')!;
+    const row = (await screen.findByText('Laptop')).closest('tr')!;
     expect(row).toHaveTextContent('Never expires');
-    await user.click(within(row).getByRole('button', { name: 'Delete' }));
     await user.click(
-      within(row).getByRole('button', { name: 'Delete the token' }),
+      within(row).getByRole('button', { name: 'More actions for Laptop' }),
     );
-    expect(await screen.findByText('No API tokens yet.')).toBeInTheDocument();
+    await user.click(
+      screen.getByRole('menuitem', { name: 'Delete the token' }),
+    );
+    const confirm = await screen.findByRole('alertdialog');
+    expect(confirm).toHaveTextContent(
+      'Delete “Laptop”? Scripts using it stop working.',
+    );
+    await user.click(
+      within(confirm).getByRole('button', { name: 'Delete the token' }),
+    );
+    expect(await screen.findByText('No API tokens yet')).toBeInTheDocument();
     expect(requests.find((r) => r.method === 'DELETE')).toMatchObject({
       contentType: 'application/json',
     });
+  });
+});
+
+describe('dialogs and menus', () => {
+  it('close on Escape and give focus back to what opened them', async () => {
+    const user = userEvent.setup();
+    installFakeApi(sharedHousehold(JANE.user.id));
+    renderApp(`/accounts/${JOINT.id}`);
+
+    const open = await screen.findByRole('button', {
+      name: 'Add a transaction',
+    });
+    await user.click(open);
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Add a transaction',
+    });
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(
+      within(dialog).getByRole('radio', { name: 'Money out' }),
+    ).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(open).toHaveFocus();
+
+    // The close button does the same.
+    await user.click(open);
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', {
+        name: 'Close',
+      }),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(open).toHaveFocus();
+  });
+
+  it('menus move with the arrow keys and close on Escape', async () => {
+    const user = userEvent.setup();
+    installFakeApi(sharedHousehold(JANE.user.id));
+    renderApp(`/accounts/${JOINT.id}`);
+
+    const button = await screen.findByRole('button', {
+      name: `More actions for ${JOINT.name}`,
+    });
+    expect(button).toHaveAttribute('aria-haspopup', 'menu');
+    button.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(button).toHaveAttribute('aria-expanded', 'true');
+    const items = screen.getAllByRole('menuitem');
+    expect(items[0]).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(items[1]).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(items[0]).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(items[1]).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(button).toHaveFocus();
+  });
+
+  it('shows an unknown page inside the app when signed in', async () => {
+    installFakeApi(householdState({ session: JANE.user.id }));
+    renderApp('/no-such-page');
+    expect(
+      await screen.findByRole('heading', { name: 'Page not found' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'Main' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'Go to the overview' }),
+    ).toBeInTheDocument();
   });
 });

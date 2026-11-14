@@ -2,8 +2,9 @@
 /*
  * Ledger components and screens. Read only the DESIGN.md tokens: no
  * colour, size or radius is written here by value. The only literal
- * lengths are hairlines (1px borders) and the 2px focus ring that
- * DESIGN.md specifies.
+ * lengths are hairlines (1px borders), the 2px focus ring that DESIGN.md
+ * specifies, and the `md` (768px) and `lg` (1024px) breakpoints, which
+ * media queries cannot read from variables.
  */
 
 *,
@@ -123,9 +124,9 @@ a {
   white-space: normal;
   cursor: pointer;
   transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .sd-button:disabled,
@@ -237,7 +238,18 @@ a {
 .sd-card--flush {
   padding: 0;
   gap: 0;
-  overflow: hidden;
+}
+
+/*
+ * Flush cards do not clip (row menus open over their edge, day headings
+ * stick to the page), so the last row rounds its own corners.
+ */
+.sd-card--flush tbody:last-child tr:last-child > :first-child {
+  border-bottom-left-radius: var(--radius-lg);
+}
+
+.sd-card--flush tbody:last-child tr:last-child > :last-child {
+  border-bottom-right-radius: var(--radius-lg);
 }
 
 .sd-card__header {
@@ -388,19 +400,26 @@ a {
   background: var(--surface-sunken);
 }
 
+/* The chevron is an Icon next to the select (Select in Fields.tsx). */
 select.sd-input {
   appearance: none;
-  padding-right: var(--space-8);
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--ink) 50%),
-    linear-gradient(135deg, var(--ink) 50%, transparent 50%);
-  background-position:
-    calc(100% - var(--space-4) - var(--space-1)) 50%,
-    calc(100% - var(--space-4) + var(--space-1) / 4) 50%;
-  background-size:
-    var(--space-1) var(--space-1),
-    var(--space-1) var(--space-1);
-  background-repeat: no-repeat;
+  padding-right: calc(var(--space-3) + var(--space-6));
+  cursor: pointer;
+}
+
+.sd-select {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.sd-select__chevron {
+  position: absolute;
+  top: 50%;
+  right: var(--space-3);
+  transform: translateY(-50%);
+  color: var(--ink-muted);
+  pointer-events: none;
 }
 
 .sd-field__hint {
@@ -532,55 +551,6 @@ select.sd-input {
 
 /* --- Lists and rows --------------------------------------------------- */
 
-.sd-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.sd-list > li + li {
-  border-top: 1px solid var(--border);
-}
-
-.sd-row-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  min-height: calc(var(--icon-tile) + var(--space-3) * 2);
-  color: inherit;
-  text-decoration: none;
-}
-
-a.sd-row-item:hover {
-  background: var(--surface-sunken);
-}
-
-.sd-row-item__main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--space-1) / 2);
-  min-width: 0;
-}
-
-.sd-row-item__label {
-  overflow-wrap: anywhere;
-}
-
-.sd-row-item__end {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--space-1);
-  text-align: right;
-}
-
-.sd-row-item--pending .sd-row-item__label,
-.sd-row-item--pending .sd-amount {
-  color: var(--ink-muted);
-}
-
 .sd-icon-tile {
   flex: none;
   display: grid;
@@ -588,6 +558,17 @@ a.sd-row-item:hover {
   width: var(--icon-tile);
   height: var(--icon-tile);
   border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+
+.sd-avatar {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-pill);
   background: var(--surface-sunken);
   color: var(--ink);
 }
@@ -603,12 +584,722 @@ a.sd-row-item:hover {
   border-top: 1px solid var(--border);
 }
 
-.sd-empty {
+.sd-card__pad {
+  padding: var(--space-4);
+}
+
+.sd-link {
+  color: var(--ink);
+  text-underline-offset: 0.2em;
+}
+
+.sd-link:hover {
+  color: var(--ink-muted);
+}
+
+.sd-section {
   display: flex;
   flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sd-section__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+code {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* --- Icon button and menu --------------------------------------------- */
+
+.sd-icon-button {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: var(--control-md);
+  height: var(--control-md);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.sd-icon-button:hover:not(:disabled),
+.sd-icon-button[aria-expanded='true'] {
+  background: var(--surface-sunken);
+}
+
+.sd-icon-button:disabled {
+  cursor: not-allowed;
+  color: var(--ink-disabled);
+}
+
+.sd-menu {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.sd-menu__list {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--space-12) * 4);
+  max-width: calc(100vw - var(--space-8));
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  animation: sd-pop-in var(--motion-base) var(--ease-out);
+}
+
+.sd-menu__list--up {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
+
+.sd-menu__list--start {
+  right: auto;
+  left: 0;
+}
+
+.sd-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-md);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sd-menu__item:hover,
+.sd-menu__item:focus {
+  background: var(--surface-sunken);
+}
+
+.sd-menu__item--danger {
+  color: var(--negative);
+}
+
+/* --- Dialog and bottom sheet ------------------------------------------ */
+
+html.sd-modal-open {
+  overflow: hidden;
+}
+
+/* Below `md`: a bottom sheet. */
+.sd-dialog {
+  width: 100%;
+  max-width: 100%;
+  max-height: 90vh;
+  margin: auto 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.sd-dialog[open] {
+  display: flex;
+  animation: sd-sheet-in var(--motion-base) var(--ease-out);
+}
+
+.sd-dialog::backdrop {
+  background: var(--scrim);
+  animation: sd-fade-in var(--motion-base) var(--ease-out);
+}
+
+.sd-dialog__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-4)
+    calc(var(--space-4) + env(safe-area-inset-bottom));
+}
+
+.sd-dialog__header {
+  display: flex;
   align-items: flex-start;
+  justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-8) var(--space-4);
+}
+
+.sd-dialog__titles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding-top: var(--space-2);
+}
+
+.sd-dialog__close {
+  margin: calc(var(--space-2) * -1) calc(var(--space-2) * -1) 0 0;
+}
+
+.sd-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.sd-dialog__footer {
+  display: flex;
+  flex-wrap: wrap-reverse;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+.sd-dialog__footer > .sd-button {
+  flex: 1 1 auto;
+}
+
+.sd-details {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.sd-details > div {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  min-width: 0;
+}
+
+.sd-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sd-iban {
+  word-spacing: 0.15em;
+}
+
+/* --- Tables (DataTable) ---------------------------------------------- */
+
+.sd-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.sd-table th,
+.sd-table td {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.sd-table thead th {
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+
+.sd-table tbody tr + tr {
+  border-top: 1px solid var(--border);
+}
+
+/* A day heading opens its group: no line between it and its first row. */
+.sd-table tbody .sd-table__day + tr {
+  border-top: 0;
+}
+
+.sd-table__num {
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+.sd-table__main {
+  width: 100%;
+  min-width: 0;
+}
+
+.sd-table__label,
+.sd-table__link {
+  overflow-wrap: anywhere;
+}
+
+.sd-table__stack {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  min-width: 0;
+}
+
+.sd-table__main > .caption {
+  display: block;
+}
+
+.sd-table__with-icon {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.sd-table__meta,
+.sd-table__status,
+.sd-table__control {
+  white-space: nowrap;
+}
+
+.sd-table__actions {
+  width: var(--control-md);
+  padding-block: var(--space-1) !important;
+  text-align: right;
+}
+
+.sd-table__link {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/* The whole row opens the account. */
+.sd-table__row--link {
+  position: relative;
+}
+
+.sd-table__link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.sd-table__link:focus-visible {
+  outline: none;
+}
+
+.sd-table__row--link:has(.sd-table__link:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.sd-table__row--link:hover {
+  background: var(--surface-sunken);
+}
+
+/* Sticky day headings of the transactions. */
+.sd-table__day th {
+  position: sticky;
+  top: var(--topbar-height);
+  z-index: 1;
+  padding-block: var(--space-2);
+  background: var(--surface);
+  color: var(--ink-muted);
+}
+
+.sd-table tbody + tbody .sd-table__day th {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.sd-table__day + tr td {
+  padding-top: var(--space-1);
+}
+
+.sd-table__row--pending .sd-table__label,
+.sd-table__row--pending .sd-amount {
+  color: var(--ink-muted);
+}
+
+.sd-table__row--new td {
+  animation: sd-flash 2s var(--ease-out);
+}
+
+/* The label in a cell that the column header names from `md`. */
+.sd-table__cell-label {
+  color: var(--ink-muted);
+}
+
+/* Below `md`: headers are only read, and rows fold into blocks. */
+@media (max-width: 767px) {
+  .sd-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .sd-table--accounts tr,
+  .sd-table--invitations tr,
+  .sd-table--tokens tr,
+  .sd-table--people tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-3);
+    row-gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .sd-table--accounts td,
+  .sd-table--invitations td,
+  .sd-table--tokens td,
+  .sd-table--people td {
+    padding: 0;
+    white-space: normal;
+  }
+
+  .sd-table--accounts .sd-table__main,
+  .sd-table--invitations .sd-table__main,
+  .sd-table--tokens .sd-table__main,
+  .sd-table--tokens .sd-table__meta {
+    grid-column: 1;
+  }
+
+  .sd-table--accounts .sd-table__meta {
+    grid-column: 1;
+    padding-left: calc(var(--icon-tile) + var(--space-3));
+  }
+
+  .sd-table--accounts .sd-table__num,
+  .sd-table--tokens .sd-table__actions {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+  }
+
+  .sd-table--invitations .sd-table__meta:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .sd-table--invitations .sd-table__meta:nth-child(2) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .sd-table--people .sd-table__main {
+    grid-column: 1 / -1;
+  }
+
+  .sd-table--people .sd-table__control {
+    grid-column: 1;
+    padding-left: calc(var(--space-8) + var(--space-3));
+  }
+
+  .sd-table--people .sd-table__actions {
+    grid-column: 2;
+    width: auto;
+  }
+
+  .sd-table--transactions th,
+  .sd-table--transactions td {
+    padding-inline: var(--space-3);
+  }
+
+  /* The pending badge goes under the label, so labels keep the width. */
+  .sd-table--transactions .sd-table__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-3);
+    row-gap: var(--space-1);
+    padding: var(--space-3);
+  }
+
+  .sd-table--transactions .sd-table__row td {
+    padding: 0;
+  }
+
+  .sd-table--transactions .sd-table__status {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .sd-table--transactions .sd-table__status:empty {
+    display: none;
+  }
+
+  .sd-table--transactions .sd-table__num {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .sd-table--transactions .sd-table__day + tr {
+    padding-top: var(--space-1);
+  }
+}
+
+@media (min-width: 768px) {
+  .sd-table__cell-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .sd-table__control .sd-select {
+    display: inline-block;
+  }
+
+  .sd-table__control .sd-input {
+    width: auto;
+    min-width: calc(var(--space-12) * 3);
+  }
+}
+
+/* --- Empty, loading, toast -------------------------------------------- */
+
+.sd-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-12) var(--space-4);
+  text-align: center;
+}
+
+.sd-empty-state > .body {
+  max-width: var(--content-narrow);
+}
+
+.sd-empty-state > .sd-button {
+  margin-top: var(--space-2);
+}
+
+.sd-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sd-skeleton__block {
+  display: block;
+  height: var(--space-12);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  animation: sd-pulse 1.2s ease-in-out infinite alternate;
+}
+
+.sd-skeleton__block--title {
+  width: 40%;
+  height: var(--space-8);
+}
+
+.sd-skeleton__block--hero {
+  height: calc(var(--space-12) * 3);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-3);
+}
+
+.sd-toast-region {
+  position: fixed;
+  left: 50%;
+  bottom: calc(
+    var(--tabbar-height) + var(--space-4) + env(safe-area-inset-bottom)
+  );
+  z-index: 40;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - var(--space-8));
+  pointer-events: none;
+}
+
+.sd-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-inverse);
+  color: var(--on-inverse);
+  box-shadow: var(--shadow-pop);
+  animation: sd-pop-in var(--motion-base) var(--ease-out);
+}
+
+/* --- Balance and summary ---------------------------------------------- */
+
+.sd-card--inverse .sd-amount--positive,
+.sd-card--inverse .sd-amount--negative {
+  /* Meaning colours fail contrast on the inverse fill: the sign speaks. */
+  color: var(--on-inverse);
+}
+
+.sd-balance {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+.sd-balance__main,
+.sd-summary {
+  gap: var(--space-1);
+}
+
+.sd-balance__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sd-balance__main .amount-xl,
+.sd-summary .amount-xl {
+  margin-block: var(--space-1);
+}
+
+.sd-balance__month {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin: 0;
+}
+
+.sd-balance__month > div {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+}
+
+.sd-balance__month dd {
+  margin: 0;
+}
+
+.sd-summary__others {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-8);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) 0 0;
+  list-style: none;
+  border-top: 1px solid var(--on-inverse-muted);
+}
+
+.sd-summary__others li {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+}
+
+/* --- Account cards ----------------------------------------------------- */
+
+.sd-card-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(min(100%, var(--card-min)), 1fr)
+  );
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sd-account-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.sd-account-card:hover {
+  border-color: var(--border-strong);
+}
+
+.sd-account-card:has(.sd-account-card__link:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sd-account-card__text {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+  min-width: 0;
+}
+
+.sd-account-card__link {
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.sd-account-card__link:focus-visible {
+  outline: none;
+}
+
+/* The whole card opens the account. */
+.sd-account-card__link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+}
+
+.sd-account-card__balance {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.sd-add-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 100%;
+  min-height: calc(var(--space-12) * 3);
+  padding: var(--space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.sd-add-card:hover {
+  color: var(--ink);
+  background: var(--surface);
 }
 
 /* --- Secret shown once ------------------------------------------------ */
@@ -628,103 +1319,199 @@ a.sd-row-item:hover {
   overflow-wrap: anywhere;
 }
 
-/* --- Shell ---------------------------------------------------------- */
+/* --- App shell -------------------------------------------------------- */
 
 .sd-shell {
   min-height: 100vh;
-  display: flex;
-  flex-direction: column;
 }
 
+/* Above the viewport until focused; then a plain button, no shadow. */
 .sd-skip {
-  position: absolute;
+  position: fixed;
   top: var(--space-2);
   left: var(--space-2);
-  z-index: 1;
+  z-index: 50;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: var(--accent);
   color: var(--on-accent);
-  box-shadow: var(--shadow-pop);
+  text-decoration: none;
+  transform: translateY(calc(-100% - var(--space-4)));
+  transition: transform var(--motion-fast) var(--ease-out);
 }
 
-/* Off screen until focused by keyboard. */
-.sd-skip:not(:focus) {
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  box-shadow: none;
+.sd-skip:focus {
+  transform: none;
 }
 
+/* Below `lg`: top bar. */
 .sd-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--topbar-height);
+  padding-inline: var(--space-4) var(--space-2);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 
-.sd-topbar__inner,
-.sd-main {
-  width: 100%;
-  max-width: calc(var(--space-12) * 16);
-  margin: 0 auto;
-  padding-inline: var(--space-4);
-}
-
-.sd-topbar__inner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding-block: var(--space-3);
-}
-
-.sd-brand {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.sd-brand a {
+.sd-topbar__brand,
+.sd-sidebar__brand {
+  display: inline-flex;
   text-decoration: none;
+}
+
+/* The one truncated label: the household name, as a last resort. */
+.sd-topbar__household {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Below `lg`: the sidebar is the bottom tab bar. */
+.sd-sidebar {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 20;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.sd-sidebar__brand,
+.sd-sidebar__household,
+.sd-sidebar__member,
+.sd-nav__group {
+  display: none;
 }
 
 .sd-nav {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
+  min-height: var(--tabbar-height);
+}
+
+.sd-nav__list {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sd-nav__list[data-count='1'] {
+  flex: 1 1 0;
+}
+
+.sd-nav__list[data-count='2'] {
+  flex: 2 1 0;
+}
+
+.sd-nav__list > li {
+  flex: 1 1 0;
+  display: flex;
+  min-width: 0;
 }
 
 .sd-nav__link {
-  display: inline-flex;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
-  min-height: var(--control-md);
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-pill);
+  justify-content: center;
+  gap: calc(var(--space-1) / 2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-1);
   color: var(--ink-muted);
+  text-align: center;
   text-decoration: none;
+}
+
+.sd-nav__icon {
+  display: grid;
+  place-items: center;
+  width: var(--control-lg);
+  height: var(--space-8);
+  border-radius: var(--radius-pill);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.sd-nav__text {
+  overflow-wrap: anywhere;
+  hyphens: auto;
 }
 
 .sd-nav__link:hover {
   color: var(--ink);
-  background: var(--surface-sunken);
 }
 
+/* The active tab: a lime pill behind the icon. */
 .sd-nav__link[aria-current='page'] {
+  color: var(--ink);
+}
+
+.sd-nav__link[aria-current='page'] .sd-nav__icon {
   background: var(--highlight);
   color: var(--on-highlight);
 }
 
-.sd-main {
+.sd-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--control-md);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sd-member:hover,
+.sd-member[aria-expanded='true'] {
+  background: var(--surface-sunken);
+}
+
+.sd-member__text {
   flex: 1;
-  padding-block: var(--space-8) var(--space-12);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sd-sidebar__member .sd-menu {
+  display: flex;
+  width: 100%;
+}
+
+.sd-sidebar__member .sd-menu__list {
+  width: 100%;
+}
+
+.sd-main {
+  display: block;
+  padding: var(--space-6) var(--space-4)
+    calc(var(--tabbar-height) + var(--space-8) + env(safe-area-inset-bottom));
+}
+
+.sd-main:focus {
+  outline: none;
+}
+
+.sd-main__inner {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+  width: 100%;
+  max-width: var(--content-max);
 }
 
 .sd-page-header {
@@ -732,14 +1519,30 @@ a.sd-row-item:hover {
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-3) var(--space-4);
 }
 
 .sd-page-header__text {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
+}
+
+.sd-page-header__title {
+  overflow-wrap: anywhere;
+}
+
+.sd-page-header__subtitle {
+  margin-top: var(--space-1);
+}
+
+.sd-page-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .sd-back {
@@ -748,8 +1551,10 @@ a.sd-row-item:hover {
   gap: var(--space-1);
   align-self: flex-start;
   min-height: var(--control-md);
+  margin-block: calc(var(--space-3) * -1) calc(var(--space-1) * -1);
   color: var(--ink-muted);
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .sd-back:hover {
@@ -757,17 +1562,211 @@ a.sd-row-item:hover {
 }
 
 .sd-back svg {
+  flex: none;
   transform: scaleX(-1);
 }
 
-.sd-grid {
-  display: grid;
-  gap: var(--space-6);
-  grid-template-columns: repeat(
-    auto-fit,
-    minmax(min(100%, calc(var(--space-12) * 7)), 1fr)
-  );
-  align-items: start;
+@media (min-width: 768px) {
+  .sd-dialog {
+    width: min(var(--content-narrow), calc(100% - var(--space-8)));
+    max-height: calc(100vh - var(--space-12) * 2);
+    margin: auto;
+    border-radius: var(--radius-xl);
+  }
+
+  .sd-dialog[open] {
+    animation-name: sd-dialog-in;
+  }
+
+  .sd-dialog__panel {
+    max-height: calc(100vh - var(--space-12) * 2);
+    padding: var(--space-6);
+  }
+
+  .sd-dialog__footer > .sd-button {
+    flex: none;
+  }
+
+  .sd-details {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .sd-main {
+    padding-inline: var(--space-6);
+  }
+
+  .sd-main__inner {
+    gap: var(--space-8);
+  }
+
+  .sd-card-grid {
+    gap: var(--space-6);
+  }
+}
+
+/* From `lg`: the sidebar. */
+@media (min-width: 1024px) {
+  /* The sidebar's fill and edge run the full height of the page. */
+  .sd-shell {
+    display: grid;
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    background: linear-gradient(
+      to right,
+      var(--surface) calc(var(--sidebar-width) - 1px),
+      var(--border) calc(var(--sidebar-width) - 1px) var(--sidebar-width),
+      transparent var(--sidebar-width)
+    );
+  }
+
+  .sd-topbar {
+    display: none;
+  }
+
+  .sd-sidebar {
+    position: sticky;
+    top: 0;
+    inset: 0 auto auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    height: 100vh;
+    padding: var(--space-6) var(--space-3) var(--space-4);
+    border-top: 0;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+  }
+
+  .sd-sidebar__brand {
+    display: inline-flex;
+    align-self: flex-start;
+    padding-inline: var(--space-3);
+  }
+
+  .sd-sidebar__household {
+    display: block;
+    padding-inline: var(--space-3);
+    margin-bottom: var(--space-4);
+    overflow-wrap: anywhere;
+  }
+
+  .sd-nav {
+    flex-direction: column;
+    gap: var(--space-1);
+    min-height: 0;
+  }
+
+  .sd-nav__list {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .sd-nav__group {
+    display: block;
+    padding: var(--space-5) var(--space-3) var(--space-2);
+  }
+
+  .sd-nav__link {
+    position: relative;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--space-3);
+    min-height: var(--control-md);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    text-align: left;
+  }
+
+  .sd-nav__icon {
+    width: auto;
+    height: auto;
+  }
+
+  .sd-nav__link:hover {
+    background: var(--surface-sunken);
+  }
+
+  /* Active item: recessed fill and a lime bar, no lime pill. */
+  .sd-nav__link[aria-current='page'] {
+    background: var(--surface-sunken);
+  }
+
+  .sd-nav__link[aria-current='page'] .sd-nav__icon {
+    background: none;
+    color: inherit;
+  }
+
+  .sd-nav__link[aria-current='page']::before {
+    content: '';
+    position: absolute;
+    top: var(--space-3);
+    bottom: var(--space-3);
+    left: 0;
+    width: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--highlight);
+  }
+
+  .sd-sidebar__member {
+    display: block;
+    margin-top: auto;
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+  }
+
+  .sd-main {
+    padding: var(--space-8) var(--space-8) var(--space-12);
+  }
+
+  .sd-table__day th {
+    top: 0;
+  }
+
+  .sd-toast-region {
+    left: auto;
+    right: var(--space-6);
+    bottom: var(--space-6);
+    transform: none;
+  }
+}
+
+/* --- Motion ----------------------------------------------------------- */
+
+@keyframes sd-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes sd-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--space-1) * -1));
+  }
+}
+
+@keyframes sd-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sd-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+}
+
+@keyframes sd-flash {
+  from {
+    background: var(--highlight-soft);
+  }
+}
+
+@keyframes sd-pulse {
+  to {
+    opacity: 0.5;
+  }
 }
 
 /* --- Public screens (setup, login, join) ------------------------------ */

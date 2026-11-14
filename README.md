@@ -64,7 +64,7 @@ Bank connector crates may declare only `connector-sdk` and the crates listed in 
 - **Server**: `docker compose up` (PostgreSQL) or `docker compose -f compose.sqlite.yaml up` (SQLite), then open <http://localhost:8080> and enter the one-time setup code the server prints in its log (`docker compose logs server | grep "setup code"`). A one-shot init container generates the master key into its own volume, apart from the data; you can also provide your own. The guide, with backups, home-network and reverse-proxy setups and upgrades, is [docs/self-hosting.md](docs/self-hosting.md).
 - **Desktop** (planned): installers for macOS, Windows and Linux.
 
-It is not ready for everyday use yet. The web app covers the first steps: setting up your household, signing in, inviting members, manual accounts and transactions, sharing and API tokens. Bank connections are still to come, and the interface is in English until the translations land.
+It is not ready for everyday use yet. The web app covers the first steps: setting up your household, signing in, an overview of where your accounts stand, inviting members, manual accounts (with their current balance) and transactions, sharing and API tokens. Bank connections are still to come, and the interface is in English until the translations land.
 
 ## Configuration
 

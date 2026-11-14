@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Pieces shared by the screens: headers, the public "gate" layout,
-// loading and error states, and form helpers.
+// loading and error states, form helpers and account formatting.
 import { Link } from '@tanstack/react-router';
 import {
   useEffect,
@@ -10,12 +10,15 @@ import {
   type ReactNode,
 } from 'react';
 import { flushSync } from 'react-dom';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import type { AccountKind, Permission } from '../api/client';
 import { errorMessage } from '../api/errors';
+import type { ParseAmountError } from '../lib/money';
 import { Button } from '../components/Button';
 import { Badge, Card, Notice } from '../components/Display';
 import { Icon, type IconName } from '../components/Icon';
+import { Skeleton } from '../components/States';
 
 /** Sets the tab title to "<screen> · Solde". */
 export function useDocumentTitle(title: string) {
@@ -36,7 +39,7 @@ export function Wordmark({ small = false }: { small?: boolean }) {
 
 interface PageHeaderProps {
   title: string;
-  overline?: ReactNode;
+  /** A line under the title: badges, or one sentence. */
   subtitle?: ReactNode;
   back?:
     | { to: '/accounts'; label: string }
@@ -45,12 +48,12 @@ interface PageHeaderProps {
         params: { accountId: string };
         label: string;
       };
+  /** At most one primary button, then a `Menu`. */
   actions?: ReactNode;
 }
 
 export function PageHeader({
   title,
-  overline,
   subtitle,
   back,
   actions,
@@ -69,11 +72,14 @@ export function PageHeader({
             {back.label}
           </Link>
         )}
-        {overline && <p className="overline sd-muted">{overline}</p>}
-        <h1 className="title">{title}</h1>
-        {subtitle && <div className="body sd-muted">{subtitle}</div>}
+        <h1 className="title-lg sd-page-header__title">{title}</h1>
+        {subtitle && (
+          <div className="body sd-muted sd-page-header__subtitle">
+            {subtitle}
+          </div>
+        )}
       </div>
-      {actions && <div className="sd-row">{actions}</div>}
+      {actions && <div className="sd-page-header__actions">{actions}</div>}
     </header>
   );
 }
@@ -105,13 +111,13 @@ export function Gate({ title, intro, children, footer }: GateProps) {
   );
 }
 
-export function LoadingState() {
+export function LoadingState({
+  variant = 'rows',
+}: {
+  variant?: 'rows' | 'page';
+}) {
   const { t } = useTranslation();
-  return (
-    <p className="body sd-muted" role="status">
-      {t('common.loading')}
-    </p>
-  );
+  return <Skeleton label={t('common.loading')} variant={variant} />;
 }
 
 export function ErrorState({
@@ -184,6 +190,24 @@ export function useForm<V extends Record<string, string>>(
   return { values, errors, bind, handleSubmit, reset };
 }
 
+/** What to say about an amount `parseAmount` refused. */
+export function amountError(
+  t: TFunction,
+  error: ParseAmountError,
+  digits: number,
+): string {
+  switch (error) {
+    case 'empty':
+      return t('transactions.errors.amountRequired');
+    case 'too_many_decimals':
+      return t('transactions.errors.amountDecimals', { digits });
+    case 'too_large':
+      return t('transactions.errors.amountTooLarge');
+    default:
+      return t('transactions.errors.amountInvalid');
+  }
+}
+
 /** Counts user-perceived characters, like the server's 12-character rule. */
 export function charCount(text: string): number {
   return [...text].length;
@@ -227,4 +251,20 @@ export function PermissionBadge({ permission }: { permission: Permission }) {
 export function maskIban(iban: string): string {
   const compact = iban.replace(/\s+/g, '');
   return `•••• ${compact.slice(-4)}`;
+}
+
+/** An IBAN in groups of four (`FR76 3000 6000 …`), for the account details. */
+export function groupIban(iban: string): string {
+  const compact = iban.replace(/\s+/g, '').toUpperCase();
+  return compact.replace(/(.{4})(?=.)/g, '$1 ');
+}
+
+/** Up to two initials of a name, for the member avatar. */
+export function initials(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((word) => [...word][0]?.toLocaleUpperCase() ?? '')
+    .join('');
 }

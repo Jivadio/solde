@@ -131,9 +131,17 @@ export function installFakeApi(state: FakeState) {
       (a) => a.user_id === state.session,
     );
     const account = state.accounts.find((a) => a.id === accountId);
-    return account && entry
-      ? { ...account, permission: entry.permission }
-      : null;
+    if (!account || !entry) return null;
+    // Opening balance plus booked transactions, like the server.
+    const booked = (state.transactions[accountId] ?? [])
+      .filter((tx) => tx.status === 'booked')
+      .reduce((sum, tx) => sum + tx.amount_minor, 0);
+    return {
+      ...account,
+      permission: entry.permission,
+      current_balance_minor:
+        account.balance_minor == null ? null : account.balance_minor + booked,
+    };
   };
 
   async function handle(request: Request): Promise<Response> {
@@ -232,7 +240,7 @@ export function installFakeApi(state: FakeState) {
         currency: String(b.currency),
         minor_digits: MINOR_DIGITS[String(b.currency)] ?? 2,
         iban: (b.iban as string | null) ?? null,
-        balance_minor: null,
+        balance_minor: (b.balance_minor as number | null) ?? null,
         permission: 'owner',
       };
       state.accounts.push(account);
@@ -240,7 +248,7 @@ export function installFakeApi(state: FakeState) {
         { user_id: current.user.id, permission: 'owner' },
       ];
       state.transactions[account.id] = [];
-      return json(201, account);
+      return json(201, visible(account.id));
     }
     const accountMatch = /^\/accounts\/([^/]+)(\/.*)?$/.exec(path);
     if (accountMatch) {

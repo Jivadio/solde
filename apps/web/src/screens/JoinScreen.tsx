@@ -45,7 +45,7 @@ export function JoinScreen({ token }: { token?: string }) {
       call(api.POST('/api/v1/invitations/accept', { body })),
     onSuccess: async (me) => {
       queryClient.setQueryData(meQuery.queryKey, me);
-      await navigate({ to: '/accounts' });
+      await navigate({ to: '/' });
     },
   });
 

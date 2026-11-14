@@ -4,7 +4,7 @@
 // - Not set up yet (`GET /meta` -> `bootstrapped: false`): every path goes
 //   to `/setup`, and `/setup` goes to `/login` once set up.
 // - Signed out: every app path goes to `/login?redirect=...`.
-// - Signed in: `/login`, `/join` go to `/accounts`.
+// - Signed in: `/login`, `/join` go to the overview (`/`).
 //
 // Hash history keeps routing inside the page, so the server only ever
 // serves `index.html`, and invitation tokens in `#/join?token=` never
@@ -25,9 +25,9 @@ import { AppLayout } from './screens/AppLayout';
 import { InvitationsScreen } from './screens/InvitationsScreen';
 import { JoinScreen } from './screens/JoinScreen';
 import { LoginScreen } from './screens/LoginScreen';
-import { NewAccountScreen } from './screens/NewAccountScreen';
 import { SetupScreen } from './screens/SetupScreen';
 import { SharingScreen } from './screens/SharingScreen';
+import { OverviewScreen } from './screens/OverviewScreen';
 import { NotFoundScreen, RootError, RootPending } from './screens/System';
 import { TokensScreen } from './screens/TokensScreen';
 
@@ -50,7 +50,7 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 
 async function redirectIfSignedIn({ context }: { context: RouterContext }) {
   const me = await context.queryClient.ensureQueryData(meQuery);
-  if (me) throw redirect({ to: '/accounts' });
+  if (me) throw redirect({ to: '/' });
 }
 
 const setupRoute = createRoute({
@@ -102,21 +102,24 @@ const appRoute = createRoute({
 const indexRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/',
-  beforeLoad: () => {
-    throw redirect({ to: '/accounts' });
-  },
+  component: OverviewScreen,
 });
 
 const accountsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/accounts',
-  component: AccountsScreen,
+  component: function AccountsRoute() {
+    return <AccountsScreen />;
+  },
 });
 
+/** The accounts list with "Add an account" open, for links. */
 const newAccountRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/accounts/new',
-  component: NewAccountScreen,
+  component: function NewAccountRoute() {
+    return <AccountsScreen adding />;
+  },
 });
 
 const accountRoute = createRoute({
@@ -141,7 +144,7 @@ const invitationsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/invitations',
   beforeLoad: ({ context }) => {
-    if (context.me.user.role !== 'admin') throw redirect({ to: '/accounts' });
+    if (context.me.user.role !== 'admin') throw redirect({ to: '/' });
   },
   component: InvitationsScreen,
 });

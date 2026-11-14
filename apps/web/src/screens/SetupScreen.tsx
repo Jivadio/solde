@@ -18,6 +18,9 @@ import {
   useForm,
 } from './common';
 
+/** A shell command: never translated. */
+const LOGS_COMMAND = 'docker compose logs server';
+
 export function SetupScreen() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -52,7 +55,7 @@ export function SetupScreen() {
     onSuccess: async (me) => {
       markBootstrapped();
       queryClient.setQueryData(meQuery.queryKey, me);
-      await navigate({ to: '/accounts' });
+      await navigate({ to: '/' });
     },
     onError: (error) => {
       if (error instanceof ApiError && error.code === 'already_bootstrapped') {
@@ -85,7 +88,12 @@ export function SetupScreen() {
         )}
         <TextField
           label={t('setup.code')}
-          hint={t('setup.codeHint')}
+          hint={
+            <>
+              {t('setup.codeHint')} <code>{LOGS_COMMAND}</code>
+            </>
+          }
+          keepHint
           autoComplete="off"
           autoCapitalize="characters"
           spellCheck={false}
