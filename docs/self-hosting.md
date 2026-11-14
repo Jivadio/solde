@@ -75,21 +75,24 @@ This is the only time Solde ever prints the key. It never appears in the logs.
 
 ### The data
 
-Backups hold all your household's data: keep them readable by you only (`umask 077` below).
+Backups hold all your household's data. The commands below write each one to a fresh file that only you can read (`mktemp` creates it with mode `0600`) and give it its dated name only once it is complete, so a failed run never replaces a good backup.
 
 With PostgreSQL:
 
 ```sh
-(umask 077; docker compose exec -T postgres pg_dump -U solde solde > solde-$(date +%F).sql)
+tmp=$(mktemp solde-backup.XXXXXX)
+docker compose exec -T postgres pg_dump -U solde solde > "$tmp" &&
+  mv "$tmp" solde-$(date +%F).sql
 ```
 
 With SQLite, stop the server for a moment so the database file is consistent, then copy the volume:
 
 ```sh
 docker compose -f compose.sqlite.yaml stop server
-backup=solde-data-$(date +%F).tgz
-(umask 077; docker run --rm --volumes-from "$(docker compose -f compose.sqlite.yaml ps -aq server)":ro \
-  alpine:3.22 tar czf - -C /data . > "$backup.tmp") && mv "$backup.tmp" "$backup"
+tmp=$(mktemp solde-backup.XXXXXX)
+docker run --rm --volumes-from "$(docker compose -f compose.sqlite.yaml ps -aq server)":ro \
+  alpine:3.22 tar czf - -C /data . > "$tmp" &&
+  mv "$tmp" solde-data-$(date +%F).tgz
 docker compose -f compose.sqlite.yaml start server
 ```
 
