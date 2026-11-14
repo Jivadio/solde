@@ -75,10 +75,12 @@ This is the only time Solde ever prints the key. It never appears in the logs.
 
 ### The data
 
+Backups hold all your household's data: keep them readable by you only (`umask 077` below).
+
 With PostgreSQL:
 
 ```sh
-docker compose exec -T postgres pg_dump -U solde solde > solde-$(date +%F).sql
+(umask 077; docker compose exec -T postgres pg_dump -U solde solde > solde-$(date +%F).sql)
 ```
 
 With SQLite, stop the server for a moment so the database file is consistent, then copy the volume:
@@ -86,8 +88,8 @@ With SQLite, stop the server for a moment so the database file is consistent, th
 ```sh
 docker compose -f compose.sqlite.yaml stop server
 backup=solde-data-$(date +%F).tgz
-docker run --rm --volumes-from "$(docker compose -f compose.sqlite.yaml ps -aq server)":ro \
-  alpine:3.22 tar czf - -C /data . > "$backup.tmp" && mv "$backup.tmp" "$backup"
+(umask 077; docker run --rm --volumes-from "$(docker compose -f compose.sqlite.yaml ps -aq server)":ro \
+  alpine:3.22 tar czf - -C /data . > "$backup.tmp") && mv "$backup.tmp" "$backup"
 docker compose -f compose.sqlite.yaml start server
 ```
 
