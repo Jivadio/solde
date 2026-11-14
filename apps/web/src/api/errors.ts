@@ -30,6 +30,7 @@ const MESSAGES = {
   label_too_long: 'errors.label_too_long',
   last_owner: 'errors.last_owner',
   malformed_json: 'errors.invalid_request',
+  method_not_allowed: 'errors.invalid_request',
   name_too_long: 'errors.name_too_long',
   network: 'errors.network',
   not_found: 'errors.not_found',
