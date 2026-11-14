@@ -526,6 +526,23 @@ async fn login_logout(api: &TestApi) {
             .status,
         StatusCode::OK
     );
+    // The plain-HTTP cookie name does not count when cookies are Secure.
+    // Checked while the session is live, so a 401 shows the name is refused.
+    let token = ok.session();
+    let token = token.split_once('=').expect("pair").1;
+    let other_name = format!("solde_session={token}");
+    for (i, bad) in [
+        "__Host-solde_session=",
+        "__Host-solde_session=deadbeef",
+        "other=1",
+        other_name.as_str(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let res = api.send(Req::get("/api/v1/me").cookie(bad)).await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "cookie #{i}");
+    }
 
     let logout = api
         .send(Req::post("/api/v1/auth/logout", json!({})).cookie(&cookie))
@@ -536,19 +553,6 @@ async fn login_logout(api: &TestApi) {
     assert_eq!(after.status, StatusCode::UNAUTHORIZED);
     assert_eq!(after.code(), "unauthorized");
 
-    // The plain-HTTP cookie name does not count when cookies are Secure.
-    let token = ok.session();
-    let token = token.split_once('=').expect("pair").1;
-    let other_name = format!("solde_session={token}");
-    for bad in [
-        "__Host-solde_session=",
-        "__Host-solde_session=deadbeef",
-        "other=1",
-        other_name.as_str(),
-    ] {
-        let res = api.send(Req::get("/api/v1/me").cookie(bad)).await;
-        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{bad}");
-    }
     assert_eq!(
         api.send(Req::get("/api/v1/accounts")).await.status,
         StatusCode::UNAUTHORIZED
