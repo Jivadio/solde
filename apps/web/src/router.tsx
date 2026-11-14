@@ -79,7 +79,9 @@ const joinRoute = createRoute({
   beforeLoad: redirectIfSignedIn,
   component: function JoinRoute() {
     const { token } = joinRoute.useSearch();
-    return <JoinScreen token={token} />;
+    // Keyed by token: a new invitation link in the same tab starts a
+    // fresh form instead of keeping the old token.
+    return <JoinScreen key={token ?? ''} token={token} />;
   },
 });
 

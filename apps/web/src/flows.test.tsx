@@ -504,6 +504,32 @@ describe('invitations and tokens', () => {
     expect(screen.queryByText(/fake-invitation-token/)).not.toBeInTheDocument();
   });
 
+  it('uses the new token when the invitation link changes in the tab', async () => {
+    const user = userEvent.setup();
+    const { requests } = installFakeApi(
+      householdState({ inviteTokens: ['replacement-invitation-token'] }),
+    );
+    const { router } = renderApp('/join?token=old-invitation-token');
+    await screen.findByRole('heading', { name: 'Join the household' });
+    await router.navigate({
+      to: '/join',
+      search: { token: 'replacement-invitation-token' },
+    });
+    await user.type(screen.getByLabelText('Your name'), 'Alex Doe');
+    await user.type(screen.getByLabelText('Email'), 'alex@example.com');
+    await user.type(
+      screen.getByLabelText('Password'),
+      'a long enough password',
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Join the household' }),
+    );
+    await screen.findByRole('heading', { name: 'Accounts' });
+    expect(
+      requests.find((r) => r.path === '/invitations/accept'),
+    ).toMatchObject({ body: { token: 'replacement-invitation-token' } });
+  });
+
   it('accepts an invitation from the link', async () => {
     const user = userEvent.setup();
     const { requests } = installFakeApi(
