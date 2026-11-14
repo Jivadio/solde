@@ -16,6 +16,8 @@ interface FieldFrameProps {
   optionalLabel?: string;
   hint?: ReactNode;
   error?: ReactNode;
+  /** Keep the hint under the error (when it says where to find the value). */
+  keepHint?: boolean;
   children: ReactNode;
 }
 
@@ -25,6 +27,7 @@ function FieldFrame({
   optionalLabel,
   hint,
   error,
+  keepHint = false,
   children,
 }: FieldFrameProps) {
   return (
@@ -36,26 +39,32 @@ function FieldFrame({
         )}
       </label>
       {children}
-      {error ? (
+      {error && (
         <p id={`${id}-error`} className="sd-field__error caption">
           <Icon name="alert" size={14} />
           {error}
         </p>
-      ) : (
-        hint && (
-          <p id={`${id}-hint`} className="sd-field__hint caption">
-            {hint}
-          </p>
-        )
+      )}
+      {hint && (!error || keepHint) && (
+        <p id={`${id}-hint`} className="sd-field__hint caption">
+          {hint}
+        </p>
       )}
     </div>
   );
 }
 
-function describedBy(id: string, hint: unknown, error: unknown) {
-  if (error) return `${id}-error`;
-  if (hint) return `${id}-hint`;
-  return undefined;
+function describedBy(
+  id: string,
+  hint: unknown,
+  error: unknown,
+  keepHint = false,
+) {
+  const ids = [
+    error ? `${id}-error` : '',
+    hint && (!error || keepHint) ? `${id}-hint` : '',
+  ].filter(Boolean);
+  return ids.length > 0 ? ids.join(' ') : undefined;
 }
 
 interface TextFieldProps extends Omit<
@@ -67,10 +76,14 @@ interface TextFieldProps extends Omit<
   optionalLabel?: string;
   hint?: ReactNode;
   error?: ReactNode;
+  keepHint?: boolean;
 }
 
 export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
-  function TextField({ label, optionalLabel, hint, error, ...input }, ref) {
+  function TextField(
+    { label, optionalLabel, hint, error, keepHint, ...input },
+    ref,
+  ) {
     const id = useId();
     return (
       <FieldFrame
@@ -79,13 +92,14 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
         optionalLabel={optionalLabel}
         hint={hint}
         error={error}
+        keepHint={keepHint}
       >
         <input
           ref={ref}
           id={id}
           className="sd-input"
           aria-invalid={error ? true : undefined}
-          aria-describedby={describedBy(id, hint, error)}
+          aria-describedby={describedBy(id, hint, error, keepHint)}
           {...input}
         />
       </FieldFrame>
@@ -113,16 +127,37 @@ export function SelectField({
   const id = useId();
   return (
     <FieldFrame id={id} label={label} hint={hint} error={error}>
-      <select
+      <Select
         id={id}
-        className="sd-input"
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy(id, hint, error)}
         {...select}
       >
         {children}
-      </select>
+      </Select>
     </FieldFrame>
+  );
+}
+
+/**
+ * A bare select with the chevron icon, for places where the label is not
+ * shown (a table row): give it a translated `aria-label`.
+ */
+export function Select({
+  className,
+  children,
+  ...select
+}: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <span className="sd-select">
+      <select
+        className={['sd-input', className].filter(Boolean).join(' ')}
+        {...select}
+      >
+        {children}
+      </select>
+      <Icon name="chevron-down" size={18} className="sd-select__chevron" />
+    </span>
   );
 }
 
@@ -135,14 +170,24 @@ interface AmountFieldProps extends Omit<
   currencyLabel: string;
   hint?: ReactNode;
   error?: ReactNode;
+  optionalLabel?: string;
 }
 
 /** Amount entry: 56px high, right-aligned `amount-lg` digits. */
 export const AmountField = forwardRef<HTMLInputElement, AmountFieldProps>(
-  function AmountField({ label, currencyLabel, hint, error, ...input }, ref) {
+  function AmountField(
+    { label, currencyLabel, hint, error, optionalLabel, ...input },
+    ref,
+  ) {
     const id = useId();
     return (
-      <FieldFrame id={id} label={label} hint={hint} error={error}>
+      <FieldFrame
+        id={id}
+        label={label}
+        optionalLabel={optionalLabel}
+        hint={hint}
+        error={error}
+      >
         <div
           className="sd-amount-input"
           data-invalid={error ? true : undefined}

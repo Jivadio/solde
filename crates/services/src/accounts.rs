@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Manual accounts: create, list, read, delete.
 
+use std::collections::HashMap;
+
 use solde_core_domain::{
     Account, AccountId, AccountKind, Action, Currency, Permission, normalize_iban,
 };
 use solde_storage::{NewAccount, Store};
 
-use crate::error::{MAX_NAME_CHARS, check_amount, clean_name};
+use crate::error::{MAX_AMOUNT_MINOR, MAX_NAME_CHARS, check_amount, clean_name};
 use crate::viewer::{account_for, visible_account};
 use crate::{ServiceError, ValidationError, Viewer, visible_account_ids};
 
@@ -28,6 +30,40 @@ pub struct VisibleAccount {
     pub account: Account,
     /// The viewer's own permission on it.
     pub permission: Permission,
+    /// The opening balance plus every booked transaction in the account's
+    /// currency, in minor units ([`current_balance`]). `None` when the
+    /// opening balance is unknown, or when the result would leave
+    /// ±[`MAX_AMOUNT_MINOR`].
+    pub current_balance_minor: Option<i64>,
+}
+
+/// The current balance of an account: its opening balance plus `booked`,
+/// the sum of its booked transactions in its currency (from
+/// [`Store::booked_totals`]). `None` without an opening balance, since
+/// transactions alone say how the balance moved, not where it stands, and
+/// `None` beyond ±[`MAX_AMOUNT_MINOR`], which no client could show exactly.
+pub fn current_balance(account: &Account, booked: i128) -> Option<i64> {
+    let opening = account.balance?.amount_minor();
+    let total = i128::from(opening).checked_add(booked)?;
+    let limit = i128::from(MAX_AMOUNT_MINOR);
+    if (-limit..=limit).contains(&total) {
+        i64::try_from(total).ok()
+    } else {
+        None
+    }
+}
+
+fn with_balance(
+    account: Account,
+    permission: Permission,
+    totals: &HashMap<AccountId, i128>,
+) -> VisibleAccount {
+    let booked = totals.get(&account.id).copied().unwrap_or(0);
+    VisibleAccount {
+        current_balance_minor: current_balance(&account, booked),
+        account,
+        permission,
+    }
 }
 
 /// Creates a manual account; the viewer becomes its owner.
@@ -81,10 +117,8 @@ pub async fn create_account(
         balance_minor,
     };
     let account = store.create_account(account, viewer.user_id()).await?;
-    Ok(VisibleAccount {
-        account,
-        permission: Permission::Owner,
-    })
+    // A new account has no transactions yet.
+    Ok(with_balance(account, Permission::Owner, &HashMap::new()))
 }
 
 /// Checks an IBAN and returns its normalized form (upper case, no spaces):
@@ -125,22 +159,21 @@ pub fn validate_iban(raw: &str) -> Result<String, ValidationError> {
     }
 }
 
-/// The accounts the viewer may see, in the store's order.
+/// The accounts the viewer may see, in the store's order, each with its
+/// current balance.
 pub async fn list_accounts(
     store: &dyn Store,
     viewer: &Viewer,
 ) -> Result<Vec<VisibleAccount>, ServiceError> {
     let visible = visible_account_ids(store, viewer).await?;
+    let totals = store.booked_totals(viewer.household_id()).await?;
     Ok(store
         .list_accounts(viewer.household_id())
         .await?
         .into_iter()
         .filter_map(|account| {
             let permission = *visible.get(&account.id)?;
-            Some(VisibleAccount {
-                account,
-                permission,
-            })
+            Some(with_balance(account, permission, &totals))
         })
         .collect())
 }
@@ -153,10 +186,8 @@ pub async fn get_account(
     account_id: AccountId,
 ) -> Result<VisibleAccount, ServiceError> {
     let (account, permission) = visible_account(store, viewer, account_id).await?;
-    Ok(VisibleAccount {
-        account,
-        permission,
-    })
+    let totals = store.booked_totals(viewer.household_id()).await?;
+    Ok(with_balance(account, permission, &totals))
 }
 
 /// Deletes an account with its grants and transactions. Owners only:
@@ -176,7 +207,43 @@ pub async fn delete_account(
 
 #[cfg(test)]
 mod tests {
+    use solde_core_domain::{HouseholdId, Money};
+
     use super::*;
+
+    fn account(opening: Option<i64>) -> Account {
+        Account {
+            id: AccountId::from_u128(1),
+            household_id: HouseholdId::from_u128(2),
+            kind: AccountKind::Checking,
+            name: "Fake account".to_owned(),
+            iban: None,
+            currency: Currency::EUR,
+            balance: opening.map(|minor| Money::from_minor(minor, Currency::EUR)),
+        }
+    }
+
+    #[test]
+    fn current_balance_adds_booked_transactions() {
+        assert_eq!(current_balance(&account(Some(10_000)), -2_550), Some(7_450));
+        assert_eq!(current_balance(&account(Some(-500)), 0), Some(-500));
+        assert_eq!(current_balance(&account(None), 2_550), None, "no opening");
+        let max = MAX_AMOUNT_MINOR;
+        assert_eq!(current_balance(&account(Some(max)), 0), Some(max));
+        assert_eq!(current_balance(&account(Some(-max)), 0), Some(-max));
+        assert_eq!(current_balance(&account(Some(max)), 1), None, "too high");
+        assert_eq!(current_balance(&account(Some(-max)), -1), None, "too low");
+        assert_eq!(
+            current_balance(&account(Some(0)), i128::from(i64::MAX) * 3),
+            None
+        );
+        assert_eq!(current_balance(&account(Some(1)), i128::MAX), None);
+        // Back in range after a large detour.
+        assert_eq!(
+            current_balance(&account(Some(max)), -i128::from(max)),
+            Some(0)
+        );
+    }
 
     #[test]
     fn validates_ibans() {

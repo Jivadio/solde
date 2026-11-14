@@ -302,8 +302,13 @@ pub struct AccountDto {
     /// not a locale library, whose digits can differ (CLDR has 0 for HUF).
     pub minor_digits: u32,
     /// Opening balance in minor units, if known. It does not move with
-    /// transactions.
+    /// transactions: see `current_balance_minor`.
     pub balance_minor: Option<i64>,
+    /// Current balance in minor units: `balance_minor` plus every booked
+    /// transaction in the account's currency (pending ones are left out).
+    /// `null` when the opening balance is unknown, or when the total would
+    /// leave ±(2^53 − 1).
+    pub current_balance_minor: Option<i64>,
     /// The caller's own permission on it.
     pub permission: PermissionDto,
 }
@@ -319,6 +324,7 @@ impl From<VisibleAccount> for AccountDto {
             currency: account.currency.as_str().to_owned(),
             minor_digits: account.currency.minor_digits(),
             balance_minor: account.balance.map(|money| money.amount_minor()),
+            current_balance_minor: visible.current_balance_minor,
             permission: visible.permission.into(),
         }
     }

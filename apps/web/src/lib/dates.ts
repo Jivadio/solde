@@ -64,3 +64,10 @@ export function formatDateTime(timestamp: string, locale: string): string {
     timeStyle: 'short',
   }).format(date);
 }
+
+/** A moment (RFC 3339) as a medium date, without the time. */
+export function formatDate(timestamp: string, locale: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(date);
+}

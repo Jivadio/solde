@@ -6,6 +6,8 @@
 //! [`solde_core_domain::permission_on`]). Methods listing household data
 //! therefore take a household id, never a viewer.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use solde_core_domain::{
     Account, AccountAccess, AccountId, Household, HouseholdId, Transaction, TransactionId, User,
@@ -210,4 +212,16 @@ pub trait Store: Send + Sync {
         account_id: AccountId,
         limit: u32,
     ) -> Result<Vec<Transaction>, StoreError>;
+
+    /// For every account of the household with at least one booked
+    /// transaction in the account's own currency, the sum of those
+    /// amounts in minor units. Pending transactions and amounts in another
+    /// currency are left out. The sum is exact over the whole `i64` range
+    /// of each amount (hence `i128`): range checks are the caller's job.
+    /// Like [`Store::list_accounts`], it covers accounts the viewer may not
+    /// see: filter through `visible_account_ids` first.
+    async fn booked_totals(
+        &self,
+        household_id: HouseholdId,
+    ) -> Result<HashMap<AccountId, i128>, StoreError>;
 }

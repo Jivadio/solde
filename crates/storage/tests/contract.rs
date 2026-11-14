@@ -143,6 +143,7 @@ contracts!(
     accounts,
     account_access,
     transactions,
+    booked_totals,
     q_date,
     concurrent_bootstrap,
     last_owner,
@@ -847,6 +848,78 @@ async fn transactions(store: Arc<dyn Store>) {
     assert!(
         matches!(orphan, Err(StoreError::MissingReference)),
         "{orphan:?}"
+    );
+}
+
+async fn booked_totals(store: Arc<dyn Store>) {
+    let (home, alice, bob) = household(&*store).await;
+    let busy = store
+        .create_account(checking(home, "Alice checking", None), alice)
+        .await
+        .expect("busy");
+    let quiet = store
+        .create_account(checking(home, "Alice savings", None), alice)
+        .await
+        .expect("quiet");
+    let other = store
+        .create_account(checking(home, "Bob checking", None), bob)
+        .await
+        .expect("other");
+    assert!(
+        store.booked_totals(home).await.expect("empty").is_empty(),
+        "no transactions, no totals"
+    );
+
+    // Extremes on both sides: the sum leaves the i64 range and must stay
+    // exact (a plain SQL SUM would overflow).
+    let booked = [i64::MAX, i64::MAX, 1, -42, i64::MIN, -1, i64::MAX];
+    for (day, minor) in (1u8..).zip(booked) {
+        store
+            .create_transaction(manual(busy.id, date(2026, 3, day), minor, "Fake entry"))
+            .await
+            .expect("booked");
+    }
+    // Left out: a pending transaction and one in another currency.
+    store
+        .create_transaction(NewTransaction {
+            status: TransactionStatus::Pending,
+            ..manual(busy.id, date(2026, 3, 20), 1_000, "Fake pending")
+        })
+        .await
+        .expect("pending");
+    store
+        .create_transaction(NewTransaction {
+            amount: Money::from_minor(5_000, Currency::USD),
+            ..manual(busy.id, date(2026, 3, 21), 0, "Fake dollars")
+        })
+        .await
+        .expect("other currency");
+    store
+        .create_transaction(manual(other.id, date(2026, 3, 1), -2_550, "Fake grocer"))
+        .await
+        .expect("other account");
+
+    let totals = store.booked_totals(home).await.expect("totals");
+    let expected: i128 = booked.iter().copied().map(i128::from).sum();
+    assert!(
+        expected > i128::from(i64::MAX),
+        "the test must overflow i64"
+    );
+    assert_eq!(totals.get(&busy.id), Some(&expected));
+    assert_eq!(totals.get(&other.id), Some(&-2_550));
+    assert_eq!(totals.get(&quiet.id), None, "no booked transaction");
+    assert_eq!(totals.len(), 2);
+
+    // Totals follow the account out.
+    assert!(store.delete_account(busy.id).await.expect("delete"));
+    let totals = store.booked_totals(home).await.expect("after delete");
+    assert_eq!(totals.len(), 1);
+    assert_eq!(
+        store
+            .booked_totals(HouseholdId::from_u128(9))
+            .await
+            .expect("unknown household"),
+        Default::default()
     );
 }
 

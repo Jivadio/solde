@@ -307,10 +307,18 @@ export interface components {
             /**
              * Format: int64
              * @description Opening balance in minor units, if known. It does not move with
-             *     transactions.
+             *     transactions: see `current_balance_minor`.
              */
             balance_minor?: number | null;
             currency: string;
+            /**
+             * Format: int64
+             * @description Current balance in minor units: `balance_minor` plus every booked
+             *     transaction in the account's currency (pending ones are left out).
+             *     `null` when the opening balance is unknown, or when the total would
+             *     leave ±(2^53 − 1).
+             */
+            current_balance_minor?: number | null;
             iban?: string | null;
             /** Format: uuid */
             id: string;

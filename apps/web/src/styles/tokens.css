@@ -37,7 +37,7 @@
 [data-theme="dark"] {
   --bg: #0e0f11;
   --surface: #17191c;
-  --surface-sunken: #0a0b0c;
+  --surface-sunken: #202328;
   --surface-inverse: #f2f2ee;
   --on-inverse: #121417;
   --on-inverse-muted: #5a5f66;
@@ -87,12 +87,23 @@
   --control-md: 44px;
   --control-lg: 56px;
   --icon-tile: 40px;
+  --sidebar-width: 240px;
+  --content-max: 1200px;
+  --content-narrow: 560px;
+  --card-min: 280px;
+  --topbar-height: 56px;
+  --tabbar-height: 64px;
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .amount-xl { font: 600 40px/44px var(--font-sans); letter-spacing: -0.025em; font-variant-numeric: tabular-nums; }
 .amount-lg { font: 600 28px/32px var(--font-sans); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .amount-md { font: 600 16px/22px var(--font-sans); font-variant-numeric: tabular-nums; }
 .amount-sm { font: 500 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
 .title { font: 600 24px/30px var(--font-sans); letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
+.title-lg { font: 600 24px/30px var(--font-sans); letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
+@media (min-width: 1024px) { .title-lg { font: 600 28px/34px var(--font-sans); letter-spacing: -0.02em; } }
 .heading { font: 600 16px/22px var(--font-sans); letter-spacing: -0.005em; font-variant-numeric: tabular-nums; }
 .body { font: 400 15px/22px var(--font-sans); font-variant-numeric: tabular-nums; }
 .label { font: 500 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
