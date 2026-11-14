@@ -10,7 +10,7 @@
 //! | Timestamp column type | `TIMESTAMPTZ` | fixed-width ISO 8601 `TEXT` (text order is time order) |
 //! | Migration files | `migrations/postgres/` | `migrations/sqlite/` |
 //! | "Does `schema_meta` exist?" | `information_schema.tables` | `sqlite_master` |
-//! | Write lock for migrations and bootstrap | `pg_advisory_xact_lock` | none: the write pool has one connection |
+//! | Write lock for migrations, bootstrap and access changes | `pg_advisory_xact_lock` | `BEGIN IMMEDIATE`: the lock is taken before the first read, even across processes |
 //! | Rows affected | `PgQueryResult` | `SqliteQueryResult` (no generic accessor in SQLx) |
 //! | Connection setup | pool of 10 | WAL, `busy_timeout=5000`, `foreign_keys=ON`, one writer plus read-only readers |
 //!
@@ -43,9 +43,12 @@ pub trait Dialect: Database {
     const MIGRATIONS: &'static [Migration];
     /// One row, column `n`: 1 when the `schema_meta` table exists, else 0.
     const SCHEMA_META_EXISTS: &'static str;
-    /// Statement run first in a write transaction that must not interleave
-    /// with another process (migrations, bootstrap, access changes). `None` when the pool
-    /// already serializes writers.
+    /// Statement that opens a write transaction that must not interleave
+    /// with another process (migrations, bootstrap, access changes). `None`
+    /// for a plain `BEGIN`.
+    const BEGIN_EXCLUSIVE: Option<&'static str>;
+    /// Statement run first in such a transaction. `None` when
+    /// [`Self::BEGIN_EXCLUSIVE`] already takes the lock.
     const WRITE_LOCK: Option<&'static str>;
 
     /// How an id column is bound and decoded.
@@ -100,6 +103,7 @@ impl Dialect for Postgres {
          WHERE table_schema = current_schema() AND table_name = 'schema_meta'";
     // Arbitrary constant key ("solde" in ASCII); transaction-scoped, so it
     // is released on commit or rollback.
+    const BEGIN_EXCLUSIVE: Option<&'static str> = None;
     const WRITE_LOCK: Option<&'static str> = Some("SELECT pg_advisory_xact_lock(495874460773)");
 
     type Id = Uuid;
@@ -131,6 +135,10 @@ impl Dialect for Sqlite {
     const MIGRATIONS: &'static [Migration] = SQLITE_MIGRATIONS;
     const SCHEMA_META_EXISTS: &'static str =
         "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'";
+    // Takes the write lock at once, not at the first write: another
+    // process (a second store on the same file) cannot commit between our
+    // reads and our writes, which would fail with SQLITE_BUSY_SNAPSHOT.
+    const BEGIN_EXCLUSIVE: Option<&'static str> = Some("BEGIN IMMEDIATE");
     const WRITE_LOCK: Option<&'static str> = None;
 
     type Id = Hyphenated;

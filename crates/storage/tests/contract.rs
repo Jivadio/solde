@@ -1061,6 +1061,39 @@ async fn sqlite_file_uses_wal_and_survives_reopen() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Two stores on one file (two processes, say) bootstrapping at once: one
+/// wins, the other gets `Conflict`, not a database error from acting on a
+/// stale snapshot.
+#[tokio::test]
+async fn sqlite_file_shared_by_two_stores_bootstraps_once() {
+    let dir = temp_dir();
+    let path = dir.join("solde.db");
+    SqlStore::open_sqlite_file(&path)
+        .await
+        .expect("create")
+        .close()
+        .await;
+    let first = SqlStore::open_sqlite_file(&path).await.expect("first open");
+    let second = SqlStore::open_sqlite_file(&path)
+        .await
+        .expect("second open");
+    let (a, b) = tokio::join!(
+        first.bootstrap("Test home", member("Alice Test", "alice@example.test")),
+        second.bootstrap("Other home", member("Eve Test", "eve@example.test"))
+    );
+    let conflicts = [&a, &b]
+        .iter()
+        .filter(|r| matches!(r, Err(StoreError::Conflict)))
+        .count();
+    assert!(
+        a.is_ok() != b.is_ok() && conflicts == 1,
+        "exactly one bootstrap must win and the other must conflict"
+    );
+    first.close().await;
+    second.close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[tokio::test]
 async fn sqlite_file_refuses_newer_schema() {
     let dir = temp_dir();

@@ -140,14 +140,25 @@ where
     for<'q> Option<NaiveDate>: sqlx::Encode<'q, DB>,
     for<'q> Option<DB::Timestamp>: sqlx::Encode<'q, DB>,
 {
+    /// Starts a write transaction that must not interleave with another
+    /// process (migrations, bootstrap, access changes): it holds the write
+    /// lock before its first read, so it never acts on a stale snapshot.
+    async fn begin_exclusive(&self) -> Result<sqlx::Transaction<'static, DB>, StoreError> {
+        let mut tx = match DB::BEGIN_EXCLUSIVE {
+            Some(statement) => self.writer.begin_with(statement).await?,
+            None => self.writer.begin().await?,
+        };
+        if let Some(lock) = DB::WRITE_LOCK {
+            sqlx::query(lock).execute(&mut *tx).await?;
+        }
+        Ok(tx)
+    }
+
     /// Applies every migration newer than the database, in one transaction.
     /// [`StoreError::SchemaTooNew`] (and no change at all) when the
     /// database is already ahead of this binary.
     pub async fn migrate(&self) -> Result<(), StoreError> {
-        let mut tx = self.writer.begin().await?;
-        if let Some(lock) = DB::WRITE_LOCK {
-            sqlx::query(lock).execute(&mut *tx).await?;
-        }
+        let mut tx = self.begin_exclusive().await?;
         let exists: i64 = sqlx::query(DB::SCHEMA_META_EXISTS)
             .fetch_one(&mut *tx)
             .await?
@@ -423,10 +434,7 @@ where
         household_name: &str,
         admin: NewMember,
     ) -> Result<(Household, User), StoreError> {
-        let mut tx = self.writer.begin().await?;
-        if let Some(lock) = DB::WRITE_LOCK {
-            sqlx::query(lock).execute(&mut *tx).await?;
-        }
+        let mut tx = self.begin_exclusive().await?;
         let existing: i64 = sqlx::query("SELECT COUNT(*) AS n FROM households")
             .fetch_one(&mut *tx)
             .await?
@@ -869,10 +877,7 @@ where
     }
 
     async fn set_account_access(&self, access: AccountAccess) -> Result<(), StoreError> {
-        let mut tx = self.writer.begin().await?;
-        if let Some(lock) = DB::WRITE_LOCK {
-            sqlx::query(lock).execute(&mut *tx).await?;
-        }
+        let mut tx = self.begin_exclusive().await?;
         let granted = Self::insert_access(
             &mut *tx,
             access.account_id,
@@ -893,10 +898,7 @@ where
         account_id: AccountId,
         user_id: UserId,
     ) -> Result<bool, StoreError> {
-        let mut tx = self.writer.begin().await?;
-        if let Some(lock) = DB::WRITE_LOCK {
-            sqlx::query(lock).execute(&mut *tx).await?;
-        }
+        let mut tx = self.begin_exclusive().await?;
         let result =
             sqlx::query("DELETE FROM account_access WHERE account_id = $1 AND user_id = $2")
                 .bind(Self::id(account_id.as_u128()))
