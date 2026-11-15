@@ -118,6 +118,8 @@ impl From<StoreError> for ServiceError {
         match err {
             StoreError::NotFound => ServiceError::NotFound,
             StoreError::LastOwner => ServiceError::LastOwner,
+            StoreError::DuplicateIban => ServiceError::DuplicateIban,
+            StoreError::Forbidden => ServiceError::Forbidden,
             StoreError::DateOutOfRange(_) => ServiceError::Invalid(ValidationError::DateOutOfRange),
             other => ServiceError::Storage(other),
         }

@@ -21,6 +21,15 @@ pub enum StoreError {
     /// [`Owner`](solde_core_domain::Permission::Owner). Checked inside the
     /// write transaction, so concurrent changes cannot get around it.
     LastOwner,
+    /// [`Store::create_account`](crate::Store::create_account): the owner
+    /// already holds a grant on an account of the household with the same
+    /// normalized IBAN. Checked inside the write transaction.
+    DuplicateIban,
+    /// The acting member's own grant on the account does not allow the
+    /// change (sharing needs [`Owner`](solde_core_domain::Permission::Owner)).
+    /// Checked inside the write transaction, so a permission revoked a
+    /// moment earlier is never used.
+    Forbidden,
     /// Q-DATE: only years 0000-9999 can be stored, so the text form stays a
     /// fixed-width, sortable `YYYY-MM-DD` on every backend.
     DateOutOfRange(Date),
@@ -50,6 +59,10 @@ impl fmt::Display for StoreError {
             StoreError::Conflict => f.write_str("conflicts with an existing row"),
             StoreError::MissingReference => f.write_str("refers to a row that does not exist"),
             StoreError::LastOwner => f.write_str("an account must keep at least one owner"),
+            StoreError::DuplicateIban => {
+                f.write_str("the owner already has an account with this IBAN")
+            }
+            StoreError::Forbidden => f.write_str("the acting member may not make this change"),
             StoreError::DateOutOfRange(_) => {
                 f.write_str("date out of range (only years 0000 to 9999 can be stored)")
             }
@@ -91,6 +104,8 @@ impl StoreError {
             StoreError::Conflict => "conflict",
             StoreError::MissingReference => "missing_reference",
             StoreError::LastOwner => "last_owner",
+            StoreError::DuplicateIban => "duplicate_iban",
+            StoreError::Forbidden => "forbidden",
             StoreError::DateOutOfRange(_) => "date_out_of_range",
             StoreError::SchemaTooNew { .. } => "schema_too_new",
             StoreError::UnsupportedUrl => "unsupported_url",

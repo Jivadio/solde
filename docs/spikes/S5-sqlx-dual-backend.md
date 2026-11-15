@@ -19,7 +19,9 @@ The spike had to show, on real queries, how much SQL can be written once.
 The real `crates/storage`, not a throwaway: the M2 schema (`schema_meta`,
 households, users, sessions, API tokens, invitations, accounts with a partial
 index on `(household_id, iban_normalized)`, deliberately not unique so that a
-uniqueness failure cannot reveal a private account, account access, manual
+uniqueness failure cannot reveal a private account (`create_account` refuses
+a duplicate only among the accounts the owner already holds a grant on,
+under the write lock), account access, manual
 transactions) and a `Store` trait with 34 methods covering it. That is well
 past the "10 representative queries plus one partial unique index" the plan
 asked for: inserts, lookups, conditional updates, `ON CONFLICT ... DO UPDATE`,
@@ -56,7 +58,7 @@ All of it lives in `crates/storage/src/overrides.rs`, behind a small
 | Timestamp column | `TIMESTAMPTZ` | fixed-width text `YYYY-MM-DDTHH:MM:SS.ffffffZ` | SQLx writes SQLite timestamps with a variable number of fraction digits, so text comparison (`expires_at > $1`) would be wrong |
 | Migration files | `migrations/postgres/` | `migrations/sqlite/` | column types differ (by design) |
 | "Does `schema_meta` exist?" | `information_schema.tables` | `sqlite_master` | no shared catalog |
-| Write lock (migrations, bootstrap, access changes) | `pg_advisory_xact_lock` | `BEGIN IMMEDIATE` | the lock must be held before the first read, also across processes |
+| Write lock (migrations, bootstrap, access changes, account creation with an IBAN) | `pg_advisory_xact_lock` | `BEGIN IMMEDIATE` | the lock must be held before the first read, also across processes |
 | Rows affected | `PgQueryResult::rows_affected` | `SqliteQueryResult::rows_affected` | `Database::QueryResult` has no generic accessor |
 | Connection setup | pool of 10 | WAL, `busy_timeout=5000`, `foreign_keys=ON`, one writer, read-only readers | backend tuning |
 

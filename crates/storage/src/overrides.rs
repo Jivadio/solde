@@ -10,7 +10,7 @@
 //! | Timestamp column type | `TIMESTAMPTZ` | fixed-width ISO 8601 `TEXT` (text order is time order) |
 //! | Migration files | `migrations/postgres/` | `migrations/sqlite/` |
 //! | "Does `schema_meta` exist?" | `information_schema.tables` | `sqlite_master` |
-//! | Write lock for migrations, bootstrap and access changes | `pg_advisory_xact_lock` | `BEGIN IMMEDIATE`: the lock is taken before the first read, even across processes |
+//! | Write lock for migrations, bootstrap, access changes and account creation with an IBAN | `pg_advisory_xact_lock` | `BEGIN IMMEDIATE`: the lock is taken before the first read, even across processes |
 //! | Rows affected | `PgQueryResult` | `SqliteQueryResult` (no generic accessor in SQLx) |
 //! | Connection setup | pool of 10 | WAL, `busy_timeout=5000`, `foreign_keys=ON`, one writer plus read-only readers |
 //!
@@ -44,8 +44,8 @@ pub trait Dialect: Database {
     /// One row, column `n`: 1 when the `schema_meta` table exists, else 0.
     const SCHEMA_META_EXISTS: &'static str;
     /// Statement that opens a write transaction that must not interleave
-    /// with another process (migrations, bootstrap, access changes). `None`
-    /// for a plain `BEGIN`.
+    /// with another process (migrations, bootstrap, access changes, account
+    /// creation with an IBAN). `None` for a plain `BEGIN`.
     const BEGIN_EXCLUSIVE: Option<&'static str>;
     /// Statement run first in such a transaction. `None` when
     /// [`Self::BEGIN_EXCLUSIVE`] already takes the lock.

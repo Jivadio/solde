@@ -15,7 +15,8 @@ sqlx.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+# `sync` for the barrier in the concurrency contract tests.
+tokio = { workspace = true, features = ["sync"] }
 
 [lints]
 workspace = true

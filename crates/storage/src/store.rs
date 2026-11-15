@@ -144,9 +144,17 @@ pub trait Store: Send + Sync {
     // --- Accounts and access -----------------------------------------
 
     /// Creates a manual account and makes `owner` its
-    /// [`Owner`](solde_core_domain::Permission::Owner), atomically. IBANs
-    /// are not unique here: duplicates are refused in services, among the
-    /// accounts the creator can see.
+    /// [`Owner`](solde_core_domain::Permission::Owner), atomically.
+    ///
+    /// [`StoreError::DuplicateIban`] (and no change) when `owner` already
+    /// holds a grant, of any permission, on an account of the household
+    /// with the same normalized IBAN: the accounts they can see, by the
+    /// rule of [`solde_core_domain::permission_on`] (explicit grants only).
+    /// Accounts `owner` cannot see never count, so the same IBAN stays
+    /// free for another member and the refusal reveals nothing; IBANs are
+    /// therefore not unique in the schema. With an IBAN, the check and the
+    /// insert run in one serialized transaction, so two concurrent
+    /// creations cannot both pass.
     async fn create_account(
         &self,
         account: NewAccount,
@@ -176,19 +184,33 @@ pub trait Store: Send + Sync {
         account_id: AccountId,
     ) -> Result<Vec<AccountAccess>, StoreError>;
 
-    /// Grants or changes one member's permission on one account (one grant
-    /// per pair). [`StoreError::MissingReference`] for an unknown account
-    /// or member; [`StoreError::LastOwner`] (and no change) when it would
-    /// demote the account's only owner. The check and the write happen in
-    /// one serialized transaction, so concurrent calls can never leave an
-    /// account without an owner.
-    async fn set_account_access(&self, access: AccountAccess) -> Result<(), StoreError>;
+    /// `actor` grants or changes one member's permission on one account
+    /// (one grant per pair).
+    ///
+    /// `actor`'s own grant is checked first: [`StoreError::NotFound`] when
+    /// they hold none on the account (or it does not exist), so nothing
+    /// about it is revealed, and [`StoreError::Forbidden`] when it does not
+    /// allow [`Share`](solde_core_domain::Action::Share). Then
+    /// [`StoreError::MissingReference`] for an unknown member, and
+    /// [`StoreError::LastOwner`] when it would demote the account's only
+    /// owner. Every check and the write happen in one serialized
+    /// transaction, with no change on failure: concurrent calls can never
+    /// leave an account without an owner, and a member whose access was
+    /// just revoked can no longer act on the account.
+    async fn set_account_access(
+        &self,
+        actor: UserId,
+        access: AccountAccess,
+    ) -> Result<(), StoreError>;
 
-    /// Removes a member's grant. Returns whether one existed.
-    /// [`StoreError::LastOwner`] (and no change) when it is the account's
-    /// only owner; atomic like [`Store::set_account_access`].
+    /// `actor` removes a member's grant. Returns whether one existed.
+    /// `actor` is checked like in [`Store::set_account_access`]
+    /// ([`StoreError::NotFound`], [`StoreError::Forbidden`]);
+    /// [`StoreError::LastOwner`] (and no change) when the grant is the
+    /// account's only owner. Atomic like [`Store::set_account_access`].
     async fn revoke_account_access(
         &self,
+        actor: UserId,
         account_id: AccountId,
         user_id: UserId,
     ) -> Result<bool, StoreError>;
