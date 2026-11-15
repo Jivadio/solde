@@ -44,6 +44,8 @@ export interface FakeState {
   tokens: ApiToken[];
   /** When set, `/auth/logout` fails with a 500 (session left open). */
   failLogout?: boolean;
+  /** The server runs with `SOLDE_INSECURE_COOKIES=1`. */
+  insecureCookies?: boolean;
 }
 
 export const JANE: Member = {
@@ -123,7 +125,13 @@ export function installFakeApi(state: FakeState) {
 
   const me = (): Me | null => {
     const member = state.members.find((m) => m.user.id === state.session);
-    return member ? { user: member.user, household: state.household } : null;
+    return member
+      ? {
+          user: member.user,
+          household: state.household,
+          insecure_cookies: state.insecureCookies ?? false,
+        }
+      : null;
   };
 
   const visible = (accountId: string) => {
@@ -265,6 +273,20 @@ export function installFakeApi(state: FakeState) {
       const account = visible(accountId);
       if (!account) return error(404, 'not_found');
       if (method === 'GET' && rest === '') return json(200, account);
+      if (method === 'PATCH' && rest === '') {
+        if (account.permission !== 'owner') return error(403, 'forbidden');
+        const stored = state.accounts.find((a) => a.id === accountId);
+        if (!stored) return error(404, 'not_found');
+        if ('name' in b) {
+          const name = String(b.name).trim();
+          if (!name) return error(422, 'empty_name');
+          stored.name = name;
+        }
+        if ('balance_minor' in b) {
+          stored.balance_minor = b.balance_minor as number | null;
+        }
+        return json(200, visible(accountId));
+      }
       if (method === 'GET' && rest === '/transactions') {
         const limit = Number(url.searchParams.get('limit') ?? '100');
         return json(200, (state.transactions[accountId] ?? []).slice(0, limit));
@@ -322,6 +344,17 @@ export function installFakeApi(state: FakeState) {
       };
       state.invitations.unshift(invitation);
       return json(201, { invitation, token: 'fake-invitation-token' });
+    }
+    const invitationMatch = /^\/invitations\/([^/]+)$/.exec(path);
+    if (method === 'DELETE' && invitationMatch) {
+      if (current.user.role !== 'admin') return error(403, 'forbidden');
+      const invitation = state.invitations.find(
+        (i) => i.id === invitationMatch[1],
+      );
+      if (!invitation) return error(404, 'not_found');
+      if (invitation.accepted_at) return error(409, 'invitation_accepted');
+      state.invitations = state.invitations.filter((i) => i !== invitation);
+      return json(204);
     }
     if (method === 'GET' && path === '/tokens') return json(200, state.tokens);
     if (method === 'POST' && path === '/tokens') {

@@ -26,6 +26,7 @@ const MESSAGES = {
   invalid_limit: 'errors.invalid_request',
   invalid_query: 'errors.invalid_request',
   invalid_setup_code: 'errors.invalid_setup_code',
+  invitation_accepted: 'errors.invitation_accepted',
   json_required: 'errors.invalid_request',
   label_too_long: 'errors.label_too_long',
   last_owner: 'errors.last_owner',

@@ -211,6 +211,10 @@ impl From<Household> for HouseholdDto {
 pub struct MeResponse {
     pub user: UserDto,
     pub household: HouseholdDto,
+    /// Whether the server runs with `SOLDE_INSECURE_COOKIES=1`: the session
+    /// cookie is then sent over plain HTTP too, so clients should warn.
+    /// Only signed-in callers learn this; `/meta` does not say.
+    pub insecure_cookies: bool,
 }
 
 // --- Invitations ------------------------------------------------------
@@ -286,6 +290,43 @@ pub struct CreateAccountRequest {
     /// `AccountDto.minor_digits`), if known; within ±(2^53 − 1).
     #[serde(default)]
     pub balance_minor: Option<i64>,
+}
+
+/// Changes to a manual account. Omitted fields stay as they are; the IBAN,
+/// currency and kind cannot change (unknown fields answer `invalid_body`).
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateAccountRequest {
+    /// New name; omitted keeps it. An account always has a name, so `null`
+    /// answers `invalid_body`.
+    #[serde(default, deserialize_with = "not_null")]
+    #[schema(value_type = String, required = false)]
+    pub name: Option<String>,
+    /// New opening balance in minor units of the account's currency, within
+    /// ±(2^53 − 1); `null` clears it (balance unknown), omitted keeps it.
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<i64>, nullable)]
+    pub balance_minor: Option<Option<i64>>,
+}
+
+/// A field that may be omitted (`None`, through `#[serde(default)]`) but
+/// never sent as `null`.
+fn not_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// Tells a field sent as `null` (`Some(None)`) from an omitted one (`None`,
+/// through `#[serde(default)]`).
+fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 /// An account as the caller sees it.

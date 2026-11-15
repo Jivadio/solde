@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Manual accounts: create, list, read, delete.
+//! Manual accounts: create, list, read, edit, delete.
 
 use std::collections::HashMap;
 
 use solde_core_domain::{
     Account, AccountId, AccountKind, Action, Currency, Permission, normalize_iban,
 };
-use solde_storage::{NewAccount, Store};
+use solde_storage::{AccountChanges, NewAccount, Store};
 
 use crate::error::{MAX_AMOUNT_MINOR, MAX_NAME_CHARS, check_amount, clean_name};
 use crate::viewer::{account_for, visible_account};
@@ -22,6 +22,17 @@ pub struct NewManualAccount {
     pub currency: Currency,
     /// Opening balance in minor units of `currency`, if known.
     pub balance_minor: Option<i64>,
+}
+
+/// Changes to an account's details; `None` leaves a field as it is. The
+/// IBAN, currency and kind cannot change: they identify the account (and,
+/// from M3, match it to the bank's).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountUpdate {
+    pub name: Option<String>,
+    /// Opening balance in minor units of the account's currency:
+    /// `Some(None)` clears it (balance unknown).
+    pub balance_minor: Option<Option<i64>>,
 }
 
 /// An account as one viewer sees it.
@@ -176,6 +187,45 @@ pub async fn get_account(
     let (account, permission) = visible_account(store, viewer, account_id).await?;
     let totals = store.booked_totals(viewer.household_id()).await?;
     Ok(with_balance(account, permission, &totals))
+}
+
+/// Renames an account or sets, changes or clears its opening balance, and
+/// returns it with its new current balance. Owners only:
+/// [`ServiceError::Forbidden`] for a visible account without ownership,
+/// [`ServiceError::NotFound`] for one the viewer cannot see. The name is
+/// checked like at creation, and the balance must stay within
+/// ±[`MAX_AMOUNT_MINOR`] ([`ValidationError::AmountOutOfRange`]).
+pub async fn update_account(
+    store: &dyn Store,
+    viewer: &Viewer,
+    account_id: AccountId,
+    update: AccountUpdate,
+) -> Result<VisibleAccount, ServiceError> {
+    // Input first: a refusal for bad input depends on the input alone, so
+    // it says nothing about accounts the viewer cannot see.
+    let name = update
+        .name
+        .map(|name| clean_name(&name, MAX_NAME_CHARS))
+        .transpose()?;
+    let balance_minor = update
+        .balance_minor
+        .map(|balance| balance.map(check_amount).transpose())
+        .transpose()?;
+    account_for(store, viewer, account_id, Action::Edit).await?;
+    // The store checks the viewer's grant again, atomically with the
+    // write: another owner may have demoted or revoked them meanwhile.
+    let account = store
+        .update_account(
+            viewer.user_id(),
+            account_id,
+            AccountChanges {
+                name,
+                balance_minor,
+            },
+        )
+        .await?;
+    let totals = store.booked_totals(viewer.household_id()).await?;
+    Ok(with_balance(account, Permission::Owner, &totals))
 }
 
 /// Deletes an account with its grants and transactions. Owners only:

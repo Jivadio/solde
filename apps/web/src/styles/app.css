@@ -990,13 +990,25 @@ html.sd-modal-open {
     grid-row: 1 / span 4;
   }
 
-  .sd-table--invitations .sd-table__meta:last-child {
-    grid-column: 1 / -1;
+  /* Label and status on the first line, the date under them, and the row
+     menu on the right of both, so it does not make the row taller. */
+  .sd-table--invitations tr {
+    grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
   .sd-table--invitations .sd-table__meta:nth-child(2) {
     grid-column: 2;
     grid-row: 1;
+  }
+
+  .sd-table--invitations .sd-table__meta:nth-child(3) {
+    grid-column: 1 / span 2;
+  }
+
+  .sd-table--invitations .sd-table__actions {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    padding-block: 0 !important;
   }
 
   .sd-table--people .sd-table__main {
@@ -1154,6 +1166,16 @@ html.sd-modal-open {
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--space-6);
+}
+
+/* A balance not recorded yet: say so, and let owners set it. */
+.sd-balance-unknown {
+  gap: var(--space-2);
+}
+
+.sd-balance-unknown__action {
+  display: flex;
+  margin-top: var(--space-2);
 }
 
 .sd-balance__main,

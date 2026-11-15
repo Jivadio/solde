@@ -43,8 +43,9 @@ use std::sync::Arc;
 pub use error::{StoreError, StoreErrorClass};
 pub use migrate::{Migration, SCHEMA_VERSION};
 pub use model::{
-    ApiToken, ApiTokenId, Invitation, InvitationId, NewAccount, NewApiToken, NewInvitation,
-    NewMember, NewSession, NewTransaction, NewUser, Session, SessionId, Timestamp, UserCredentials,
+    AccountChanges, ApiToken, ApiTokenId, Invitation, InvitationId, NewAccount, NewApiToken,
+    NewInvitation, NewMember, NewSession, NewTransaction, NewUser, Session, SessionId, Timestamp,
+    UserCredentials,
 };
 pub use sql::SqlStore;
 pub use store::{Backend, Store};

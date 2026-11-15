@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Shell of the signed-in app (DESIGN.md, AppShell): a sidebar from the
 // `lg` breakpoint, a top bar and a bottom tab bar below it. Signing out
-// lives in the member menu, never next to the destinations.
+// lives in the member menu, never next to the destinations. When the
+// server sends the session cookie over plain HTTP, every screen says so.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useNavigate } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
@@ -16,6 +17,41 @@ import { ToastProvider } from '../components/Toast';
 import { Wordmark, initials } from './common';
 
 type Destination = '/' | '/accounts' | '/invitations' | '/tokens';
+
+/** Where the self-hosting guide explains plain-HTTP setups and HTTPS. */
+export const SELF_HOSTING_GUIDE =
+  'https://github.com/Jivadio/solde/blob/main/docs/self-hosting.md#on-a-home-network-without-https';
+
+/**
+ * The server runs with `SOLDE_INSECURE_COOKIES=1`. Shown to every member
+ * (each one's session is exposed), on every screen, and never dismissed:
+ * it lasts as long as the setting. Admins can change it, so they read
+ * which setting it is; members are told whom to ask.
+ */
+export function InsecureCookiesNotice({ me }: { me: Me }) {
+  const { t } = useTranslation();
+  return (
+    <Notice tone="warning" title={t('insecureCookies.title')}>
+      <p>
+        {me.user.role === 'admin'
+          ? t('insecureCookies.bodyAdmin', {
+              setting: 'SOLDE_INSECURE_COOKIES=1',
+            })
+          : t('insecureCookies.bodyMember')}
+      </p>
+      <p>
+        <a
+          className="sd-link"
+          href={SELF_HOSTING_GUIDE}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {t('insecureCookies.guide')}
+        </a>
+      </p>
+    </Notice>
+  );
+}
 
 interface NavItem {
   to: Destination;
@@ -203,6 +239,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <main id="main" className="sd-main" tabIndex={-1}>
           <div className="sd-main__inner">
+            {me?.insecure_cookies && <InsecureCookiesNotice me={me} />}
             {logoutError !== null && (
               <Notice tone="negative">{errorMessage(t, logoutError)}</Notice>
             )}

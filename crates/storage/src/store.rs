@@ -16,8 +16,9 @@ use solde_core_domain::{
 
 use crate::StoreError;
 use crate::model::{
-    ApiToken, ApiTokenId, Invitation, NewAccount, NewApiToken, NewInvitation, NewMember,
-    NewSession, NewTransaction, NewUser, Session, Timestamp, UserCredentials,
+    AccountChanges, ApiToken, ApiTokenId, Invitation, InvitationId, NewAccount, NewApiToken,
+    NewInvitation, NewMember, NewSession, NewTransaction, NewUser, Session, Timestamp,
+    UserCredentials,
 };
 
 /// Which database a [`Store`] talks to.
@@ -116,6 +117,16 @@ pub trait Store: Send + Sync {
 
     async fn create_invitation(&self, invitation: NewInvitation) -> Result<Invitation, StoreError>;
 
+    /// Deletes one of the household's pending invitations, so its token no
+    /// longer works. Returns whether one was deleted: an accepted
+    /// invitation, or one of another household, is never touched. Expired
+    /// ones count as pending.
+    async fn revoke_invitation(
+        &self,
+        household_id: HouseholdId,
+        id: InvitationId,
+    ) -> Result<bool, StoreError>;
+
     /// The pending invitation with this hash: not accepted and not expired
     /// at `now`.
     async fn find_invitation(
@@ -166,6 +177,20 @@ pub trait Store: Send + Sync {
     /// Every account of the household, visible or not: filter through
     /// `visible_account_ids` before showing anything.
     async fn list_accounts(&self, household_id: HouseholdId) -> Result<Vec<Account>, StoreError>;
+
+    /// `actor` applies `changes` to an account and gets it back as stored.
+    /// Like [`Store::delete_account`], `actor`'s own grant is checked in the
+    /// same serialized transaction as the write: [`StoreError::NotFound`]
+    /// when they hold none (or the account does not exist, or belongs to
+    /// another household), [`StoreError::Forbidden`] when it does not allow
+    /// [`Edit`](solde_core_domain::Action::Edit). The IBAN, currency and
+    /// kind never change here.
+    async fn update_account(
+        &self,
+        actor: UserId,
+        id: AccountId,
+        changes: AccountChanges,
+    ) -> Result<Account, StoreError>;
 
     /// `actor` deletes an account with its access grants and transactions.
     /// Returns whether it existed. `actor`'s own grant is checked first, in

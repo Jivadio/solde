@@ -423,6 +423,8 @@ on_backends!(
     ac2_visibility_and_permissions,
     bearer_tokens,
     invitation_flow,
+    invitation_revoke,
+    account_edit,
     last_owner_and_validation,
     iban_duplicates_never_leak,
     minor_digits_follow_iso_4217,
@@ -471,9 +473,14 @@ async fn setup_runs_once(api: &TestApi) {
     assert_eq!(me.status, StatusCode::OK);
     assert_eq!(me.body["user"]["name"], "Alice Test");
     assert_eq!(me.body["household"]["name"], "Test home");
+    assert_eq!(me.body["insecure_cookies"], false);
 
     let meta = api.send(Req::get("/api/v1/meta")).await;
     assert_eq!(meta.body["bootstrapped"], true);
+    assert!(
+        meta.body.get("insecure_cookies").is_none(),
+        "only signed-in members learn the cookie setting"
+    );
 
     let again = api
         .send(Req::post(
@@ -613,6 +620,10 @@ async fn insecure_cookies_drop_secure_only() {
         let cookie = res.session();
         let me = api.send(Req::get("/api/v1/me").cookie(&cookie)).await;
         assert_eq!(me.status, StatusCode::OK);
+        assert_eq!(me.body["insecure_cookies"], true, "clients warn");
+        assert_eq!(res.body["insecure_cookies"], true, "login answers too");
+        let meta = api.send(Req::get("/api/v1/meta")).await;
+        assert!(meta.body.get("insecure_cookies").is_none());
         let logout = api
             .send(Req::post("/api/v1/auth/logout", json!({})).cookie(&cookie))
             .await;
@@ -1142,6 +1153,256 @@ async fn invitation_flow(api: &TestApi) {
             .iter()
             .all(|i| i["accepted_at"].is_string())
     );
+}
+
+async fn invitation_revoke(api: &TestApi) {
+    let alice = api.setup_alice().await;
+    let (bob, _) = api.join_bob(&alice).await;
+    let invite = api
+        .send(Req::post("/api/v1/invitations", json!({"role": "member"})).cookie(&alice))
+        .await;
+    assert_eq!(invite.status, StatusCode::CREATED);
+    let token = invite.body["token"].as_str().expect("token").to_owned();
+    api.secret(&solde_services::hash_token(&token));
+    let id = invite.body["invitation"]["id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+    let path = format!("/api/v1/invitations/{id}");
+
+    // Members cannot revoke.
+    let res = api
+        .send(Req::new(Method::DELETE, &path).json(json!({})).cookie(&bob))
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    assert_eq!(res.code(), "forbidden");
+
+    let res = api
+        .send(
+            Req::new(Method::DELETE, &path)
+                .json(json!({}))
+                .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{:?}", res.body);
+    // The revoked token no longer works.
+    let res = api
+        .send(
+            Req::post(
+                "/api/v1/invitations/accept",
+                json!({"token": token, "name": "Carol Test", "email": "carol@example.test", "password": "carol-fake-password"}),
+            )
+            .peer("192.0.2.60:1"),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert!(res.headers.get(header::SET_COOKIE).is_none());
+    let res = api
+        .send(
+            Req::new(Method::DELETE, &path)
+                .json(json!({}))
+                .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "revoked twice");
+    let res = api
+        .send(
+            Req::new(Method::DELETE, "/api/v1/invitations/not-an-id")
+                .json(json!({}))
+                .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+
+    // Bob's invitation was used: it cannot be revoked.
+    let list = api
+        .send(Req::get("/api/v1/invitations").cookie(&alice))
+        .await;
+    let invitations = list.body.as_array().expect("array");
+    assert_eq!(invitations.len(), 1, "the revoked one is gone");
+    let used = invitations[0]["id"].as_str().expect("id");
+    let res = api
+        .send(
+            Req::new(Method::DELETE, &format!("/api/v1/invitations/{used}"))
+                .json(json!({}))
+                .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CONFLICT);
+    assert_eq!(res.code(), "invitation_accepted");
+    // `accept` is still a POST-only path, not an invitation id.
+    let res = api
+        .send(
+            Req::new(Method::DELETE, "/api/v1/invitations/accept")
+                .json(json!({}))
+                .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::METHOD_NOT_ALLOWED);
+}
+
+async fn account_edit(api: &TestApi) {
+    let alice = api.setup_alice().await;
+    let (bob, bob_id) = api.join_bob(&alice).await;
+    let private = api.create_account(&alice, "Alice private").await;
+    let joint = api.create_account(&alice, "Joint").await;
+    let res = api
+        .send(
+            Req::new(
+                Method::PUT,
+                &format!("/api/v1/accounts/{joint}/access/{bob_id}"),
+            )
+            .json(json!({"permission": "write"}))
+            .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let path = format!("/api/v1/accounts/{private}");
+
+    // No opening balance yet: the current balance is unknown.
+    let res = api.send(Req::get(&path).cookie(&alice)).await;
+    assert!(res.body["current_balance_minor"].is_null());
+    let res = api
+        .send(
+            Req::post(
+                &format!("/api/v1/accounts/{private}/transactions"),
+                transaction("Fake grocer", -2_550),
+            )
+            .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED);
+
+    let res = api
+        .send(
+            Req::new(Method::PATCH, &path)
+                .json(json!({"name": " Alice main ", "balance_minor": 10_000}))
+                .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", res.body);
+    assert_eq!(res.body["name"], "Alice main");
+    assert_eq!(res.body["balance_minor"], 10_000);
+    assert_eq!(res.body["current_balance_minor"], 10_000 - 2_550);
+    assert_eq!(res.body["permission"], "owner");
+
+    // Omitted fields stay; `null` clears the balance.
+    let res = api
+        .send(
+            Req::new(Method::PATCH, &path)
+                .json(json!({"balance_minor": null}))
+                .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(res.body["name"], "Alice main");
+    assert!(res.body["balance_minor"].is_null());
+    assert!(res.body["current_balance_minor"].is_null());
+    let res = api
+        .send(
+            Req::new(Method::PATCH, &path)
+                .json(json!({"balance_minor": -500}))
+                .cookie(&alice),
+        )
+        .await;
+    assert_eq!(res.body["name"], "Alice main");
+    assert_eq!(res.body["current_balance_minor"], -500 - 2_550);
+    let listed = api.send(Req::get("/api/v1/accounts").cookie(&alice)).await;
+    let mine = listed
+        .body
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|a| a["id"] == private.as_str())
+        .expect("listed")
+        .clone();
+    assert_eq!(mine["current_balance_minor"], -3_050, "the list follows");
+
+    // Validation, as at creation; the IBAN and currency cannot change.
+    for (body, code) in [
+        (json!({"name": "  "}), "empty_name"),
+        (
+            json!({"balance_minor": 9_007_199_254_740_992_i64}),
+            "amount_out_of_range",
+        ),
+        (json!({"iban": FAKE_IBAN}), "invalid_body"),
+        (json!({"currency": "USD"}), "invalid_body"),
+        (json!({"balance_minor": 1.5}), "invalid_body"),
+        (json!({"name": null}), "invalid_body"),
+    ] {
+        let res = api
+            .send(Req::new(Method::PATCH, &path).json(body).cookie(&alice))
+            .await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{code}");
+        assert_eq!(res.code(), code);
+    }
+    let mut no_type = Req::new(Method::PATCH, &path)
+        .json(json!({"name": "Sneaky"}))
+        .cookie(&alice);
+    no_type.no_content_type = true;
+    let res = api.send(no_type).await;
+    assert_eq!(res.status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "CSRF rule");
+
+    // A write sharer sees the joint account but cannot edit it.
+    let res = api
+        .send(
+            Req::new(Method::PATCH, &format!("/api/v1/accounts/{joint}"))
+                .json(json!({"name": "Bob's"}))
+                .cookie(&bob),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    // Alice's private account answers Bob exactly like a missing one.
+    let hidden = api
+        .send(
+            Req::new(Method::PATCH, &path)
+                .json(json!({"name": "Taken over", "balance_minor": 1}))
+                .cookie(&bob),
+        )
+        .await;
+    let unknown = api
+        .send(
+            Req::new(
+                Method::PATCH,
+                &format!("/api/v1/accounts/{}", uuid::Uuid::now_v7()),
+            )
+            .json(json!({"name": "Taken over", "balance_minor": 1}))
+            .cookie(&bob),
+        )
+        .await;
+    assert_eq!(hidden.status, StatusCode::NOT_FOUND);
+    assert_eq!(hidden.body, unknown.body);
+    let res = api.send(Req::get(&path).cookie(&alice)).await;
+    assert_eq!(res.body["name"], "Alice main", "unchanged by Bob");
+    assert_eq!(res.body["balance_minor"], -500);
+
+    // Being an admin grants no access: Alice cannot edit Bob's private
+    // account, and learns nothing about it.
+    let bob_private = api.create_account(&bob, "Bob private").await;
+    let bob_path = format!("/api/v1/accounts/{bob_private}");
+    let edit = json!({"name": "Taken over", "balance_minor": 1});
+    let hidden = api
+        .send(
+            Req::new(Method::PATCH, &bob_path)
+                .json(edit.clone())
+                .cookie(&alice),
+        )
+        .await;
+    let unknown = api
+        .send(
+            Req::new(
+                Method::PATCH,
+                &format!("/api/v1/accounts/{}", uuid::Uuid::now_v7()),
+            )
+            .json(edit)
+            .cookie(&alice),
+        )
+        .await;
+    assert_eq!(hidden.status, StatusCode::NOT_FOUND);
+    assert_eq!(hidden.body, unknown.body);
+    let res = api.send(Req::get(&bob_path).cookie(&bob)).await;
+    assert_eq!(res.body["name"], "Bob private", "unchanged by the admin");
+    assert!(res.body["balance_minor"].is_null());
 }
 
 async fn last_owner_and_validation(api: &TestApi) {

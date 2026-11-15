@@ -29,6 +29,12 @@
     "household": "Household",
     "memberMenu": "Account menu for {name}"
   },
+  "insecureCookies": {
+    "title": "Your sign-in travels unencrypted",
+    "bodyAdmin": "With {setting}, browsers send the sign-in cookie over plain HTTP, where others on the network can read it. Use Solde only on a network you trust, or serve it over HTTPS.",
+    "bodyMember": "Browsers send the sign-in cookie over plain HTTP here, where others on the network can read it. Use Solde only on a network you trust, and ask your admin about HTTPS.",
+    "guide": "Read the self-hosting guide"
+  },
   "forms": {
     "yourName": "Your name",
     "email": "Email",
@@ -153,7 +159,20 @@
     "noIban": "None",
     "notRecorded": "Not recorded",
     "yourAccess": "Your access",
-    "moreActions": "More actions for {account}"
+    "moreActions": "More actions for {account}",
+    "edit": "Edit account",
+    "editTitle": "Edit account",
+    "editSubtitle": "Change its name or opening balance. Its type, currency and IBAN stay as they are.",
+    "save": "Save the changes",
+    "saved": "Account updated.",
+    "saveFailed": "The changes weren’t saved",
+    "setBalance": "Set the balance",
+    "setBalanceSubtitle": "Enter what {account} held before the transactions recorded here. Solde adds them to it to show where the account stands.",
+    "saveBalance": "Save the balance",
+    "balanceSaved": "Balance saved.",
+    "balanceRequired": "Enter the opening balance.",
+    "balanceUnknownAskOwner": "An owner of the account can set its balance.",
+    "setBalanceHint": "Use a minus sign for an overdraft or a loan."
   },
   "transactions": {
     "title": "Transactions",
@@ -241,7 +260,13 @@
       "invitation": "Invitation",
       "status": "Status",
       "date": "Date"
-    }
+    },
+    "moreActions": "More actions for the invitation that expires {date}",
+    "revoke": "Revoke the invitation",
+    "revokeTitle": "Revoke this invitation?",
+    "revokeBody": "The link stops working right away: nobody can join with it any more. You can send a new invitation later.",
+    "revokeFailed": "The invitation wasn’t revoked",
+    "revoked": "Invitation revoked."
   },
   "tokens": {
     "title": "API tokens",
@@ -315,7 +340,8 @@
     "rate_limited": "Too many attempts. Wait a minute, then try again.",
     "session_required": "Sign in with your password to do this.",
     "unauthorized": "Your session has ended. Sign in again.",
-    "unknown": "Something went wrong. Try again."
+    "unknown": "Something went wrong. Try again.",
+    "invitation_accepted": "This invitation was already used. The member who joined with it stays in the household."
   },
   "overview": {
     "title": "Overview",

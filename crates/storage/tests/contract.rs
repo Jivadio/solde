@@ -22,8 +22,8 @@ use solde_core_domain::{
     Permission, Role, TransactionId, TransactionStatus, UserId, permission_on,
 };
 use solde_storage::{
-    Backend, NewAccount, NewApiToken, NewInvitation, NewMember, NewSession, NewTransaction,
-    NewUser, SCHEMA_VERSION, SqlStore, Store, StoreError, Timestamp,
+    AccountChanges, Backend, NewAccount, NewApiToken, NewInvitation, NewMember, NewSession,
+    NewTransaction, NewUser, SCHEMA_VERSION, SqlStore, Store, StoreError, Timestamp,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -167,6 +167,7 @@ mod postgres_repeatable_read {
         concurrent_duplicate_iban,
         concurrent_share_and_revoke,
         concurrent_delete_and_revoke,
+        concurrent_update_and_demote,
         concurrent_transaction_and_revoke,
     );
 }
@@ -193,7 +194,9 @@ contracts!(
     sessions,
     api_tokens,
     invitations,
+    revoke_invitation,
     accounts,
+    update_account,
     account_access,
     transactions,
     booked_totals,
@@ -639,6 +642,282 @@ async fn invitations(store: Arc<dyn Store>) {
         .expect("still listed");
     assert_eq!(accepted.accepted_by, Some(carol.id));
     assert_eq!(accepted.accepted_at, Some(at(2).trunc_micros()));
+}
+
+async fn revoke_invitation(store: Arc<dyn Store>) {
+    let (home, alice, _) = household(&*store).await;
+    let invite = |hash: &str, expires_at| NewInvitation {
+        household_id: home,
+        role: Role::Member,
+        token_hash: hash.to_owned(),
+        created_by: alice,
+        expires_at,
+    };
+    let pending = store
+        .create_invitation(invite("revoke-hash-1", at(3600)))
+        .await
+        .expect("create");
+    let expired = store
+        .create_invitation(invite("revoke-hash-2", at(10)))
+        .await
+        .expect("create");
+    let accepted = store
+        .create_invitation(invite("revoke-hash-3", at(3600)))
+        .await
+        .expect("create");
+    store
+        .accept_invitation(
+            "revoke-hash-3",
+            member("Carol Test", "carol@example.test"),
+            at(1),
+        )
+        .await
+        .expect("accept");
+
+    // Another household's id never matches.
+    let elsewhere = HouseholdId::from_u128(uuid::Uuid::now_v7().as_u128());
+    assert!(
+        !store
+            .revoke_invitation(elsewhere, pending.id)
+            .await
+            .expect("revoke")
+    );
+    assert!(
+        store
+            .revoke_invitation(home, pending.id)
+            .await
+            .expect("revoke")
+    );
+    assert!(
+        !store
+            .revoke_invitation(home, pending.id)
+            .await
+            .expect("revoke twice")
+    );
+    // The token is gone: it can neither be found nor accepted.
+    assert!(
+        store
+            .find_invitation("revoke-hash-1", at(2))
+            .await
+            .expect("find")
+            .is_none()
+    );
+    let reused = store
+        .accept_invitation("revoke-hash-1", member("Dan", "dan@example.test"), at(2))
+        .await;
+    assert!(matches!(reused, Err(StoreError::NotFound)), "{reused:?}");
+    // Expired invitations are still pending, so they can be revoked;
+    // accepted ones stay.
+    assert!(
+        store
+            .revoke_invitation(home, expired.id)
+            .await
+            .expect("revoke expired")
+    );
+    assert!(
+        !store
+            .revoke_invitation(home, accepted.id)
+            .await
+            .expect("revoke accepted")
+    );
+    let listed = store.list_invitations(home).await.expect("list");
+    assert_eq!(
+        listed.iter().map(|i| i.id).collect::<Vec<_>>(),
+        vec![accepted.id]
+    );
+}
+
+async fn update_account(store: Arc<dyn Store>) {
+    let (home, alice, bob) = household(&*store).await;
+    let account = store
+        .create_account(
+            checking(
+                home,
+                "Alice checking",
+                Some("FR76 0000 0000 0000 0000 0000 001"),
+            ),
+            alice,
+        )
+        .await
+        .expect("create");
+    let other = store
+        .create_account(checking(home, "Untouched", None), alice)
+        .await
+        .expect("create");
+    let rename = |name: &str| AccountChanges {
+        name: Some(name.to_owned()),
+        balance_minor: None,
+    };
+
+    // Nothing to change: the account comes back as it is.
+    let same = store
+        .update_account(alice, account.id, AccountChanges::default())
+        .await
+        .expect("update");
+    assert_eq!(same, account);
+
+    let renamed = store
+        .update_account(alice, account.id, rename("Joint checking"))
+        .await
+        .expect("rename");
+    assert_eq!(renamed.name, "Joint checking");
+    assert_eq!(renamed.balance, account.balance, "balance kept");
+    assert_eq!(renamed.iban, account.iban, "IBAN kept");
+
+    let rebalanced = store
+        .update_account(
+            alice,
+            account.id,
+            AccountChanges {
+                name: None,
+                balance_minor: Some(Some(-4_200)),
+            },
+        )
+        .await
+        .expect("set balance");
+    assert_eq!(rebalanced.name, "Joint checking", "name kept");
+    assert_eq!(
+        rebalanced.balance,
+        Some(Money::from_minor(-4_200, Currency::EUR))
+    );
+
+    let cleared = store
+        .update_account(
+            alice,
+            account.id,
+            AccountChanges {
+                name: None,
+                balance_minor: Some(None),
+            },
+        )
+        .await
+        .expect("clear balance");
+    assert_eq!(cleared.balance, None);
+    assert_eq!(
+        store.get_account(account.id).await.expect("get"),
+        Some(cleared.clone())
+    );
+    assert_eq!(
+        store.get_account(other.id).await.expect("get"),
+        Some(other),
+        "other accounts untouched"
+    );
+
+    // The actor's own grant decides, in the store too: none is NotFound,
+    // a weaker one Forbidden, and the account stays as it was.
+    let no_grant = store
+        .update_account(bob, account.id, rename("Taken over"))
+        .await;
+    assert!(
+        matches!(no_grant, Err(StoreError::NotFound)),
+        "no grant must be not found"
+    );
+    for permission in [Permission::Read, Permission::Write] {
+        store
+            .set_account_access(
+                alice,
+                AccountAccess {
+                    account_id: account.id,
+                    user_id: bob,
+                    permission,
+                },
+            )
+            .await
+            .expect("share");
+        let weaker = store
+            .update_account(bob, account.id, rename("Taken over"))
+            .await;
+        assert!(
+            matches!(weaker, Err(StoreError::Forbidden)),
+            "{permission:?} must be forbidden"
+        );
+    }
+    assert_eq!(
+        store.get_account(account.id).await.expect("get"),
+        Some(cleared),
+        "refused edits change nothing"
+    );
+
+    let unknown = AccountId::from_u128(uuid::Uuid::now_v7().as_u128());
+    let missing = store.update_account(alice, unknown, rename("Ghost")).await;
+    assert!(matches!(missing, Err(StoreError::NotFound)));
+    let stranger = store
+        .update_account(unknown_user(), account.id, rename("Ghost"))
+        .await;
+    assert!(matches!(stranger, Err(StoreError::NotFound)));
+}
+
+/// Alice demotes Bob to a reader while Bob, a co-owner until then, renames
+/// the account: one of them wins, and a demoted Bob never edits it.
+async fn concurrent_update_and_demote(store: Arc<dyn Store>) {
+    let (home, alice, bob) = household(&*store).await;
+    for round in 0..RACE_ROUNDS {
+        let account = store
+            .create_account(checking(home, &format!("Joint {round}"), None), alice)
+            .await
+            .expect("account");
+        store
+            .set_account_access(
+                alice,
+                AccountAccess {
+                    account_id: account.id,
+                    user_id: bob,
+                    permission: Permission::Owner,
+                },
+            )
+            .await
+            .expect("second owner");
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let demote = {
+            let (store, barrier) = (Arc::clone(&store), Arc::clone(&barrier));
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store
+                    .set_account_access(
+                        alice,
+                        AccountAccess {
+                            account_id: account.id,
+                            user_id: bob,
+                            permission: Permission::Read,
+                        },
+                    )
+                    .await
+            })
+        };
+        let update = {
+            let (store, barrier) = (Arc::clone(&store), Arc::clone(&barrier));
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store
+                    .update_account(
+                        bob,
+                        account.id,
+                        AccountChanges {
+                            name: Some("Renamed by Bob".to_owned()),
+                            balance_minor: Some(Some(1)),
+                        },
+                    )
+                    .await
+            })
+        };
+        let demoted = demote.await.expect("task");
+        let updated = update.await.expect("task");
+        assert!(demoted.is_ok(), "round {round}: the demotion always lands");
+        let stored = store
+            .get_account(account.id)
+            .await
+            .expect("get")
+            .expect("exists");
+        match updated {
+            // Bob edited first, then lost ownership.
+            Ok(_) => assert_eq!(stored.name, "Renamed by Bob", "round {round}"),
+            // Alice demoted first: Bob's edit is refused and changes nothing.
+            Err(StoreError::Forbidden) => {
+                assert_eq!(stored, account, "round {round}");
+            }
+            Err(_) => panic!("round {round}: unexpected update error"),
+        }
+    }
 }
 
 async fn accounts(store: Arc<dyn Store>) {

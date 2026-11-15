@@ -19,8 +19,8 @@ use solde_core_domain::{
     AccountId, AccountKind, Currency, Date, Money, Permission, Role, TransactionStatus, UserId,
 };
 use solde_services::{
-    INVITATION_TTL, MAX_AMOUNT_MINOR, NewManualAccount, NewManualTransaction, NewMemberInput,
-    ServiceError, ValidationError, Viewer,
+    AccountUpdate, INVITATION_TTL, MAX_AMOUNT_MINOR, NewManualAccount, NewManualTransaction,
+    NewMemberInput, ServiceError, ValidationError, Viewer,
 };
 use solde_storage::{SqlStore, Store, Timestamp};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -145,8 +145,11 @@ on_every_backend!(
     concurrent_share_and_revoke,
     concurrent_delete_and_revoke,
     concurrent_transaction_and_revoke,
+    concurrent_update_and_demote,
     amounts_and_ibans_are_validated,
     current_balances,
+    account_edits,
+    revoking_invitations,
 );
 
 // --- Helpers ----------------------------------------------------------
@@ -587,6 +590,209 @@ async fn bootstrap_and_invitations(store: &dyn Store) {
     );
 }
 
+/// Only owners edit an account; everyone else learns nothing new.
+async fn account_edits(store: &dyn Store) {
+    let (admin, members) = household(
+        store,
+        &[
+            ("Alice Test", "alice@example.test", Role::Member),
+            ("Bob Test", "bob@example.test", Role::Member),
+            ("Dan Test", "dan@example.test", Role::Member),
+        ],
+    )
+    .await;
+    let (alice, bob, dan) = (&members[0], &members[1], &members[2]);
+    let s = store;
+    let private = solde_services::create_account(s, alice, account("Alice", Currency::EUR))
+        .await
+        .expect("private")
+        .account;
+    let joint = solde_services::create_account(s, alice, account("Joint", Currency::EUR))
+        .await
+        .expect("joint")
+        .account;
+    solde_services::share_account(s, alice, joint.id, bob.user_id(), Permission::Write)
+        .await
+        .expect("share write");
+    solde_services::share_account(s, alice, joint.id, dan.user_id(), Permission::Read)
+        .await
+        .expect("share read");
+    solde_services::create_transaction(s, alice, private.id, spending(-2_550, "Fake grocer"))
+        .await
+        .expect("spend");
+
+    let rename = |name: &str| AccountUpdate {
+        name: Some(name.to_owned()),
+        balance_minor: None,
+    };
+    let rebalance = |balance: Option<i64>| AccountUpdate {
+        name: None,
+        balance_minor: Some(balance),
+    };
+
+    // The owner renames: the balance and IBAN stay.
+    let renamed = solde_services::update_account(s, alice, private.id, rename("  Alice main  "))
+        .await
+        .expect("rename");
+    assert_eq!(renamed.account.name, "Alice main");
+    assert_eq!(renamed.account.balance, private.balance);
+    assert_eq!(renamed.account.iban, private.iban);
+    assert_eq!(renamed.permission, Permission::Owner);
+    assert_eq!(renamed.current_balance_minor, Some(10_000 - 2_550));
+
+    // The current balance follows a new opening balance, and is unknown
+    // again once the opening balance is cleared.
+    let moved = solde_services::update_account(s, alice, private.id, rebalance(Some(50_000)))
+        .await
+        .expect("set balance");
+    assert_eq!(moved.account.name, "Alice main", "name kept");
+    assert_eq!(moved.current_balance_minor, Some(50_000 - 2_550));
+    let cleared = solde_services::update_account(s, alice, private.id, rebalance(None))
+        .await
+        .expect("clear balance");
+    assert_eq!(cleared.account.balance, None);
+    assert_eq!(cleared.current_balance_minor, None);
+    let restored = solde_services::update_account(s, alice, private.id, rebalance(Some(-300)))
+        .await
+        .expect("set again");
+    assert_eq!(restored.current_balance_minor, Some(-300 - 2_550));
+    assert_eq!(
+        solde_services::get_account(s, alice, private.id)
+            .await
+            .expect("get")
+            .current_balance_minor,
+        Some(-2_850)
+    );
+
+    // Same validation as at creation.
+    for (update, what) in [
+        (rename("   "), "blank name"),
+        (rename(&"x".repeat(201)), "long name"),
+        (rebalance(Some(MAX_AMOUNT_MINOR + 1)), "balance too high"),
+        (rebalance(Some(-MAX_AMOUNT_MINOR - 1)), "balance too low"),
+    ] {
+        expect_error(
+            solde_services::update_account(s, alice, private.id, update).await,
+            |err| matches!(err, ServiceError::Invalid(_)),
+            what,
+        );
+    }
+    assert!(
+        solde_services::update_account(s, alice, private.id, rebalance(Some(MAX_AMOUNT_MINOR)))
+            .await
+            .is_ok(),
+        "the largest balance is accepted"
+    );
+
+    // Write and Read sharers see the joint account but cannot edit it.
+    assert_forbidden(
+        solde_services::update_account(s, bob, joint.id, rename("Bob's now")).await,
+        "write sharer edits",
+    );
+    assert_forbidden(
+        solde_services::update_account(s, dan, joint.id, rebalance(None)).await,
+        "read sharer edits",
+    );
+    // An account the viewer cannot see answers exactly like a missing one,
+    // and stays as it was.
+    let unknown = AccountId::from_u128(uuid::Uuid::now_v7().as_u128());
+    for (viewer, id, what) in [
+        (bob, private.id, "bob edits alice's private account"),
+        (dan, private.id, "dan edits alice's private account"),
+        (bob, unknown, "bob edits an unknown account"),
+        // The admin role grants no access: the admin learns nothing either.
+        (
+            &admin,
+            private.id,
+            "the admin edits alice's private account",
+        ),
+        (&admin, unknown, "the admin edits an unknown account"),
+    ] {
+        assert_not_found(
+            solde_services::update_account(s, viewer, id, rename("Taken over")).await,
+            what,
+        );
+        assert_not_found(
+            solde_services::update_account(s, viewer, id, rebalance(None)).await,
+            what,
+        );
+    }
+    let after = solde_services::get_account(s, alice, private.id)
+        .await
+        .expect("get");
+    assert_eq!(after.account.name, "Alice main");
+    assert_eq!(
+        after.account.balance,
+        Some(Money::from_minor(MAX_AMOUNT_MINOR, Currency::EUR))
+    );
+    assert!(!visible_set(s, bob).await.contains(&private.id));
+    // Bob's view of the joint account is unchanged by Alice's edits to it.
+    solde_services::update_account(s, alice, joint.id, rename("Household"))
+        .await
+        .expect("rename joint");
+    let seen = solde_services::get_account(s, bob, joint.id)
+        .await
+        .expect("bob sees joint");
+    assert_eq!(seen.account.name, "Household");
+    assert_eq!(seen.permission, Permission::Write);
+}
+
+/// Admins revoke pending invitations; a revoked token no longer works.
+async fn revoking_invitations(store: &dyn Store) {
+    let (admin, members) =
+        household(store, &[("Bob Test", "bob@example.test", Role::Member)]).await;
+    let bob = &members[0];
+    let s = store;
+    let pending = solde_services::create_invitation(s, &admin, Role::Member, now())
+        .await
+        .expect("invite");
+    let id = pending.invitation.id;
+
+    assert_forbidden(
+        solde_services::revoke_invitation(s, bob, id).await,
+        "member revokes",
+    );
+    solde_services::revoke_invitation(s, &admin, id)
+        .await
+        .expect("revoke");
+    assert_not_found(
+        solde_services::accept_invitation(
+            s,
+            pending.token.expose(),
+            member("Dan", "dan@example.test"),
+            now(),
+        )
+        .await,
+        "revoked token",
+    );
+    assert_not_found(
+        solde_services::revoke_invitation(s, &admin, id).await,
+        "revoke twice",
+    );
+    assert_not_found(
+        solde_services::revoke_invitation(s, &admin, uuid::Uuid::now_v7()).await,
+        "unknown invitation",
+    );
+
+    // Bob's own invitation was used: it stays, and so does Bob.
+    let used = solde_services::list_invitations(s, &admin)
+        .await
+        .expect("list");
+    assert_eq!(used.len(), 1, "the revoked one is gone");
+    expect_error(
+        solde_services::revoke_invitation(s, &admin, used[0].id).await,
+        |err| matches!(err, ServiceError::InvitationAccepted),
+        "revoke a used invitation",
+    );
+    assert_eq!(
+        solde_services::list_users(s, &admin)
+            .await
+            .expect("users")
+            .len(),
+        2
+    );
+}
+
 /// Fake IBAN (repository convention: `FR76`, zeros, valid checksum).
 const FAKE_IBAN: &str = "FR76 0000 0000 0000 0000 0000 000";
 
@@ -761,6 +967,59 @@ async fn concurrent_delete_and_revoke(store: &dyn Store) {
                 revoked.is_ok(),
                 deleted.is_ok()
             ),
+        }
+    }
+}
+
+/// Alice demotes Bob to a reader while Bob, a co-owner until then, edits
+/// the account: one of them wins, and a demoted Bob never changes it.
+async fn concurrent_update_and_demote(store: &dyn Store) {
+    let (_, members) = household(
+        store,
+        &[
+            ("Alice Test", "alice@example.test", Role::Member),
+            ("Bob Test", "bob@example.test", Role::Member),
+        ],
+    )
+    .await;
+    let (alice, bob) = (&members[0], &members[1]);
+    for round in 0..RACE_ROUNDS {
+        let joint = solde_services::create_account(store, alice, account("Joint", Currency::EUR))
+            .await
+            .expect("joint")
+            .account
+            .id;
+        solde_services::share_account(store, alice, joint, bob.user_id(), Permission::Owner)
+            .await
+            .expect("bob co-owner");
+        let (demoted, updated) = tokio::join!(
+            solde_services::share_account(store, alice, joint, bob.user_id(), Permission::Read),
+            solde_services::update_account(
+                store,
+                bob,
+                joint,
+                AccountUpdate {
+                    name: Some("Renamed by Bob".to_owned()),
+                    balance_minor: Some(Some(1)),
+                },
+            ),
+        );
+        assert!(demoted.is_ok(), "round {round}: the demotion always lands");
+        let stored = solde_services::get_account(store, alice, joint)
+            .await
+            .expect("alice still owns it")
+            .account;
+        match updated {
+            Ok(_) => assert_eq!(stored.name, "Renamed by Bob", "round {round}"),
+            Err(ServiceError::Forbidden) => {
+                assert_eq!(stored.name, "Joint", "round {round}");
+                assert_eq!(
+                    stored.balance,
+                    Some(Money::from_minor(10_000, Currency::EUR)),
+                    "round {round}"
+                );
+            }
+            Err(err) => panic!("round {round}: unexpected update error {err:?}"),
         }
     }
 }

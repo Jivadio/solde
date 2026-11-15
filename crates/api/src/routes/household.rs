@@ -2,12 +2,13 @@
 //! Members and invitations.
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use chrono::Utc;
 use solde_services::{
-    NewMemberInput, accept_invitation, create_invitation, list_invitations, list_users,
+    InvitationId, NewMemberInput, accept_invitation, create_invitation, list_invitations,
+    list_users, revoke_invitation,
 };
 
 use crate::auth::{ApiJson, Auth, AuthVia};
@@ -18,8 +19,8 @@ use crate::dto::{
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::password;
-use crate::routes::hashing;
 use crate::routes::session::signed_in;
+use crate::routes::{hashing, parse_id};
 use crate::state::AppState;
 
 /// Members of the household (names and roles only, never accounts).
@@ -89,6 +90,30 @@ pub(crate) async fn invite(
             token: created.token.expose().to_owned(),
         }),
     ))
+}
+
+/// Revokes a pending invitation: its token stops working. Admins only.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/invitations/{invitation_id}",
+    operation_id = "revokeInvitation",
+    tag = "household",
+    params(("invitation_id" = String, Path, format = Uuid)),
+    responses(
+        (status = 204, description = "Revoked"),
+        (status = 403, body = ErrorBody, description = "Not an admin"),
+        (status = 404, body = ErrorBody, description = "Unknown invitation"),
+        (status = 409, body = ErrorBody, description = "`invitation_accepted`: already used"),
+    )
+)]
+pub(crate) async fn revoke(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(invitation_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let invitation_id: InvitationId = parse_id(&invitation_id)?;
+    revoke_invitation(state.store(), &auth.viewer, invitation_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Joins the household with an invitation token, then signs in. Public;

@@ -41,8 +41,8 @@ mod transactions;
 mod viewer;
 
 pub use accounts::{
-    NewManualAccount, VisibleAccount, create_account, current_balance, delete_account, get_account,
-    list_accounts, validate_iban,
+    AccountUpdate, NewManualAccount, VisibleAccount, create_account, current_balance,
+    delete_account, get_account, list_accounts, update_account, validate_iban,
 };
 pub use auth::{
     CreatedApiToken, OpenedSession, SESSION_TTL, api_token_viewer, close_session, create_api_token,
@@ -53,6 +53,7 @@ pub use error::{MAX_AMOUNT_MINOR, ServiceError, ValidationError};
 pub use household::{
     CreatedInvitation, INVITATION_TTL, NewMemberInput, accept_invitation, bootstrap,
     create_invitation, current_member, is_bootstrapped, list_invitations, list_users,
+    revoke_invitation,
 };
 pub use sharing::{list_account_access, revoke_access, share_account};
 pub use token::{SecretToken, hash_token};

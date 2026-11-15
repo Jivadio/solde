@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Admins invite people to the household, from a dialog. The link is shown
-// once, in that dialog.
+// once, in that dialog. A pending invitation can be revoked from its row
+// menu, after a confirmation.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -8,11 +9,13 @@ import { api, call, type Invitation, type Role } from '../api/client';
 import { errorMessage } from '../api/errors';
 import { invitationsQuery, usersQuery } from '../api/queries';
 import { Button } from '../components/Button';
-import { Dialog, DialogFooter } from '../components/Dialog';
+import { ConfirmDialog, Dialog, DialogFooter } from '../components/Dialog';
 import { Badge, Notice } from '../components/Display';
 import { SegmentedControl } from '../components/Fields';
+import { Menu } from '../components/Menu';
 import { SecretOnce } from '../components/SecretOnce';
 import { EmptyState } from '../components/States';
+import { useToast } from '../components/Toast';
 import { formatDate, formatDateTime } from '../lib/dates';
 import { useFormatLocale } from '../lib/locale';
 import { ErrorState, LoadingState, PageHeader } from './common';
@@ -176,8 +179,32 @@ export function InvitationsScreen() {
   // When the screen opened: enough to tell expired invitations apart.
   const [now] = useState(() => Date.now());
   const [inviting, setInviting] = useState(false);
+  const [revoking, setRevoking] = useState<Invitation | null>(null);
+  const queryClient = useQueryClient();
+  const toast = useToast();
   const names = new Map((users.data ?? []).map((u) => [u.id, u.name]));
   const empty = invitations.data?.length === 0;
+
+  const revoke = useMutation({
+    mutationFn: (invitationId: string) =>
+      call(
+        api.DELETE('/api/v1/invitations/{invitation_id}', {
+          params: { path: { invitation_id: invitationId } },
+        }),
+      ),
+    onSuccess: async () => {
+      setRevoking(null);
+      toast(t('invitations.revoked'));
+      await queryClient.invalidateQueries({
+        queryKey: invitationsQuery.queryKey,
+      });
+    },
+    // Used meanwhile, or already gone: the list is stale either way.
+    onError: () =>
+      void queryClient.invalidateQueries({
+        queryKey: invitationsQuery.queryKey,
+      }),
+  });
 
   const inviteButton = (
     <Button icon="plus" onClick={() => setInviting(true)}>
@@ -224,6 +251,11 @@ export function InvitationsScreen() {
                 <th scope="col" className="caption">
                   {t('invitations.columns.date')}
                 </th>
+                <th scope="col" className="caption">
+                  <span className="sd-visually-hidden">
+                    {t('common.actions')}
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -263,6 +295,26 @@ export function InvitationsScreen() {
                             })}
                       </time>
                     </td>
+                    <td className="sd-table__actions">
+                      {!invitation.accepted_at && (
+                        <Menu
+                          label={t('invitations.moreActions', {
+                            date: formatDate(invitation.expires_at, locale),
+                          })}
+                          items={[
+                            {
+                              label: t('invitations.revoke'),
+                              icon: 'close',
+                              danger: true,
+                              onSelect: () => {
+                                revoke.reset();
+                                setRevoking(invitation);
+                              },
+                            },
+                          ]}
+                        />
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -271,6 +323,24 @@ export function InvitationsScreen() {
         </div>
       )}
       <InviteDialog open={inviting} onClose={() => setInviting(false)} />
+      <ConfirmDialog
+        open={revoking !== null}
+        onClose={() => setRevoking(null)}
+        title={t('invitations.revokeTitle')}
+        confirmLabel={t('invitations.revoke')}
+        cancelLabel={t('common.cancel')}
+        busy={revoke.isPending}
+        error={
+          revoke.isError && (
+            <Notice tone="negative" title={t('invitations.revokeFailed')}>
+              {errorMessage(t, revoke.error)}
+            </Notice>
+          )
+        }
+        onConfirm={() => revoking && revoke.mutate(revoking.id)}
+      >
+        {t('invitations.revokeBody')}
+      </ConfirmDialog>
     </>
   );
 }

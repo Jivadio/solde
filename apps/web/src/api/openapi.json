@@ -176,6 +176,76 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Renames an account or sets, changes or clears its opening balance; the\ncurrent balance follows. Owners only.",
+        "operationId": "updateAccount",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input (see `code`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/accounts/{account_id}/access": {
@@ -718,6 +788,61 @@
         "security": [
           {}
         ]
+      }
+    },
+    "/api/v1/invitations/{invitation_id}": {
+      "delete": {
+        "tags": [
+          "household"
+        ],
+        "summary": "Revokes a pending invitation: its token stops working. Admins only.",
+        "operationId": "revokeInvitation",
+        "parameters": [
+          {
+            "name": "invitation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown invitation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`invitation_accepted`: already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/me": {
@@ -1412,11 +1537,16 @@
         "description": "The signed-in member and their household.",
         "required": [
           "user",
-          "household"
+          "household",
+          "insecure_cookies"
         ],
         "properties": {
           "household": {
             "$ref": "#/components/schemas/HouseholdDto"
+          },
+          "insecure_cookies": {
+            "type": "boolean",
+            "description": "Whether the server runs with `SOLDE_INSECURE_COOKIES=1`: the session\ncookie is then sent over plain HTTP too, so clients should warn.\nOnly signed-in callers learn this; `/meta` does not say."
           },
           "user": {
             "$ref": "#/components/schemas/UserDto"
@@ -1556,6 +1686,25 @@
           "pending",
           "booked"
         ]
+      },
+      "UpdateAccountRequest": {
+        "type": "object",
+        "description": "Changes to a manual account. Omitted fields stay as they are; the IBAN,\ncurrency and kind cannot change (unknown fields answer `invalid_body`).",
+        "properties": {
+          "balance_minor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "New opening balance in minor units of the account's currency, within\n±(2^53 − 1); `null` clears it (balance unknown), omitted keeps it."
+          },
+          "name": {
+            "type": "string",
+            "description": "New name; omitted keeps it. An account always has a name, so `null`\nanswers `invalid_body`."
+          }
+        },
+        "additionalProperties": false
       },
       "UserDto": {
         "type": "object",

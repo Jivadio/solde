@@ -176,6 +176,7 @@ pub(crate) async fn me_response(state: &AppState, viewer: &Viewer) -> Result<MeR
     Ok(MeResponse {
         user: user.into(),
         household: household.into(),
+        insecure_cookies: state.config.insecure_cookies,
     })
 }
 
