@@ -1,15 +1,16 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Multi-stage build of the Solde server (apps/server) with the web app
 # (apps/web): build the web app, build the server, then copy both into a
 # distroless, non-root runtime image.
-
-ARG NODE_VERSION=24.22.3
-ARG RUST_VERSION=1.97.1
+#
+# Base images are pinned by tag and digest, so a release image is built from
+# exactly what was reviewed; Renovate proposes updates (renovate.json). Keep
+# the Rust version in step with rust-toolchain.toml.
 
 # 1. Web app: static files in /src/apps/web/dist.
-FROM node:${NODE_VERSION}-trixie-slim AS web
+FROM node:24.22.3-trixie-slim@sha256:af02d57b57719b9657a45199a79264a9437940cd55b3c7b3fc99615654f124a0 AS web
 WORKDIR /src
 # Corepack installs the pnpm version pinned by `packageManager`.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
@@ -22,7 +23,7 @@ COPY apps/web apps/web
 RUN pnpm --dir apps/web build
 
 # 2. Server binary.
-FROM rust:${RUST_VERSION}-slim-trixie AS build
+FROM rust:1.97.1-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c AS build
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
@@ -32,7 +33,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && mkdir -p /rootfs/data
 
 # 3. Runtime. Distroless, non-root (uid/gid 65532), no shell.
-FROM gcr.io/distroless/cc-debian13:nonroot AS runtime
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS runtime
 LABEL org.opencontainers.image.title="solde" \
       org.opencontainers.image.description="Self-hosted household finance server" \
       org.opencontainers.image.source="https://github.com/Jivadio/solde" \
