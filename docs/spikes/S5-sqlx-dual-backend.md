@@ -58,13 +58,25 @@ All of it lives in `crates/storage/src/overrides.rs`, behind a small
 | Timestamp column | `TIMESTAMPTZ` | fixed-width text `YYYY-MM-DDTHH:MM:SS.ffffffZ` | SQLx writes SQLite timestamps with a variable number of fraction digits, so text comparison (`expires_at > $1`) would be wrong |
 | Migration files | `migrations/postgres/` | `migrations/sqlite/` | column types differ (by design) |
 | "Does `schema_meta` exist?" | `information_schema.tables` | `sqlite_master` | no shared catalog |
-| Write lock (migrations, bootstrap, access changes, account creation with an IBAN) | `pg_advisory_xact_lock` | `BEGIN IMMEDIATE` | the lock must be held before the first read, also across processes |
+| Write lock (migrations, bootstrap, access changes, account deletion, manual transactions, account creation with an IBAN) | `BEGIN ISOLATION LEVEL READ COMMITTED`, then `pg_advisory_xact_lock` | `BEGIN IMMEDIATE` | the lock must be held before the first read, also across processes |
 | Rows affected | `PgQueryResult::rows_affected` | `SqliteQueryResult::rows_affected` | `Database::QueryResult` has no generic accessor |
 | Connection setup | pool of 10 | WAL, `busy_timeout=5000`, `foreign_keys=ON`, one writer, read-only readers | backend tuning |
 
 The write lock is load-bearing: with it removed, eight concurrent `bootstrap`
 calls on PostgreSQL created eight households in every run; with it, exactly
-one. The contract test `concurrent_bootstrap` keeps it that way.
+one. The contract test `concurrent_bootstrap` keeps it that way, along with
+the other `concurrent_*` contracts (duplicate IBANs, sharing, deletion and
+manual transactions racing a revocation).
+
+The isolation level matters too. The checks after the lock only see fresh
+data under READ COMMITTED, where each statement takes a new snapshot. If an
+operator sets `default_transaction_isolation` to `repeatable read` (or
+`serializable`), the snapshot would be taken by the lock statement itself,
+before it waits, and every check after it would read stale data. So the
+store opens these transactions with `BEGIN ISOLATION LEVEL READ COMMITTED`.
+Without that, all six race contracts failed when replayed with REPEATABLE
+READ as the default; the `postgres_repeatable_read` tests keep them
+passing.
 
 Timestamps are truncated to microseconds before writing, so a value reads back
 identical on both backends.

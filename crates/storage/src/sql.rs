@@ -143,9 +143,10 @@ where
     for<'q> Option<DB::Timestamp>: sqlx::Encode<'q, DB>,
 {
     /// Starts a write transaction that must not interleave with another
-    /// process (migrations, bootstrap, access changes, account creation
-    /// with an IBAN): it holds the write lock before its first read, so it
-    /// never acts on a stale snapshot.
+    /// process (migrations, bootstrap, access changes, account deletion,
+    /// manual transactions, account creation with an IBAN): it holds the
+    /// write lock before its first read, so it never acts on a stale
+    /// snapshot.
     async fn begin_exclusive(&self) -> Result<sqlx::Transaction<'static, DB>, StoreError> {
         let mut tx = match DB::BEGIN_EXCLUSIVE {
             Some(statement) => self.writer.begin_with(statement).await?,
@@ -369,16 +370,18 @@ where
         Ok(DB::rows_affected(&result) > 0)
     }
 
-    /// Fails unless `actor` may share the account right now:
-    /// [`StoreError::NotFound`] without a grant (the account is invisible
-    /// to them, or does not exist), [`StoreError::Forbidden`] when their
-    /// permission does not allow [`Action::Share`]. Called first inside the
-    /// write transaction, so it sees every change committed before it, such
-    /// as another owner revoking `actor`.
-    async fn ensure_may_share(
+    /// Fails unless `actor`'s grant on the account allows `action` right
+    /// now: [`StoreError::NotFound`] without a grant (the account is
+    /// invisible to them, or does not exist), [`StoreError::Forbidden`]
+    /// when their permission is too low. Called first inside a
+    /// [`Self::begin_exclusive`] transaction, so it sees every change
+    /// committed before it (such as another owner revoking `actor`) and no
+    /// access change can commit before the write does.
+    async fn ensure_actor_allows(
         tx: &mut sqlx::Transaction<'_, DB>,
         actor: UserId,
         account_id: AccountId,
+        action: Action,
     ) -> Result<(), StoreError> {
         let row = sqlx::query(
             "SELECT permission FROM account_access WHERE account_id = $1 AND user_id = $2",
@@ -391,7 +394,7 @@ where
             return Err(StoreError::NotFound);
         };
         let permission = permission_from_text(&row.try_get::<String, _>("permission")?)?;
-        if permission.allows(Action::Share) {
+        if permission.allows(action) {
             Ok(())
         } else {
             Err(StoreError::Forbidden)
@@ -889,11 +892,14 @@ where
         .collect()
     }
 
-    async fn delete_account(&self, id: AccountId) -> Result<bool, StoreError> {
+    async fn delete_account(&self, actor: UserId, id: AccountId) -> Result<bool, StoreError> {
+        let mut tx = self.begin_exclusive().await?;
+        Self::ensure_actor_allows(&mut tx, actor, id, Action::Delete).await?;
         let result = sqlx::query("DELETE FROM accounts WHERE id = $1")
             .bind(Self::id(id.as_u128()))
-            .execute(&self.writer)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(DB::rows_affected(&result) > 0)
     }
 
@@ -936,7 +942,7 @@ where
         access: AccountAccess,
     ) -> Result<(), StoreError> {
         let mut tx = self.begin_exclusive().await?;
-        Self::ensure_may_share(&mut tx, actor, access.account_id).await?;
+        Self::ensure_actor_allows(&mut tx, actor, access.account_id, Action::Share).await?;
         let granted = Self::insert_access(
             &mut *tx,
             access.account_id,
@@ -959,7 +965,7 @@ where
         user_id: UserId,
     ) -> Result<bool, StoreError> {
         let mut tx = self.begin_exclusive().await?;
-        Self::ensure_may_share(&mut tx, actor, account_id).await?;
+        Self::ensure_actor_allows(&mut tx, actor, account_id, Action::Share).await?;
         let result =
             sqlx::query("DELETE FROM account_access WHERE account_id = $1 AND user_id = $2")
                 .bind(Self::id(account_id.as_u128()))
@@ -976,6 +982,7 @@ where
 
     async fn create_transaction(
         &self,
+        actor: UserId,
         transaction: NewTransaction,
     ) -> Result<Transaction, StoreError> {
         let booking_date = date_to_db(transaction.booking_date)?;
@@ -992,6 +999,14 @@ where
             category: None,
             category_source: CategorySource::None,
         };
+        let mut tx = self.begin_exclusive().await?;
+        Self::ensure_actor_allows(
+            &mut tx,
+            actor,
+            created.account_id,
+            Action::AddManualTransaction,
+        )
+        .await?;
         sqlx::query(
             "INSERT INTO transactions (id, account_id, booking_date, value_date, amount_minor, \
              currency, label, status, remote_id, category_id, category_source, created_at) \
@@ -1007,8 +1022,9 @@ where
         .bind(status_to_text(created.status).to_owned())
         .bind(category_source_to_text(created.category_source).to_owned())
         .bind(Self::ts(now()))
-        .execute(&self.writer)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(created)
     }
 

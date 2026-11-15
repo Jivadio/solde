@@ -186,7 +186,9 @@ pub async fn delete_account(
     account_id: AccountId,
 ) -> Result<(), ServiceError> {
     account_for(store, viewer, account_id, Action::Delete).await?;
-    if store.delete_account(account_id).await? {
+    // The store checks the viewer's grant again, atomically with the
+    // delete: another owner may have revoked them meanwhile.
+    if store.delete_account(viewer.user_id(), account_id).await? {
         Ok(())
     } else {
         Err(ServiceError::NotFound)

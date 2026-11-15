@@ -167,9 +167,14 @@ pub trait Store: Send + Sync {
     /// `visible_account_ids` before showing anything.
     async fn list_accounts(&self, household_id: HouseholdId) -> Result<Vec<Account>, StoreError>;
 
-    /// Deletes an account with its access grants and transactions. Returns
-    /// whether it existed.
-    async fn delete_account(&self, id: AccountId) -> Result<bool, StoreError>;
+    /// `actor` deletes an account with its access grants and transactions.
+    /// Returns whether it existed. `actor`'s own grant is checked first, in
+    /// the same serialized transaction as the delete:
+    /// [`StoreError::NotFound`] when they hold none (or the account does
+    /// not exist), [`StoreError::Forbidden`] when it does not allow
+    /// [`Delete`](solde_core_domain::Action::Delete). So an owner whose
+    /// access was just revoked can no longer delete the account.
+    async fn delete_account(&self, actor: UserId, id: AccountId) -> Result<bool, StoreError>;
 
     /// Every access grant in the household: the input of
     /// [`solde_core_domain::permission_on`].
@@ -217,11 +222,17 @@ pub trait Store: Send + Sync {
 
     // --- Transactions ------------------------------------------------
 
-    /// Records a manual transaction. [`StoreError::DateOutOfRange`] outside
-    /// years 0000-9999 (Q-DATE), [`StoreError::MissingReference`] for an
-    /// unknown account.
+    /// `actor` records a manual transaction. [`StoreError::DateOutOfRange`]
+    /// outside years 0000-9999 (Q-DATE). Then `actor`'s own grant is
+    /// checked in the same serialized transaction as the insert:
+    /// [`StoreError::NotFound`] when they hold none (or the account does
+    /// not exist), [`StoreError::Forbidden`] when it does not allow
+    /// [`AddManualTransaction`](solde_core_domain::Action::AddManualTransaction).
+    /// So once a revocation or demotion commits, the member can no longer
+    /// add transactions, not even with a request already in flight.
     async fn create_transaction(
         &self,
+        actor: UserId,
         transaction: NewTransaction,
     ) -> Result<Transaction, StoreError>;
 

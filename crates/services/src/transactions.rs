@@ -49,15 +49,20 @@ pub async fn create_transaction(
     if label.chars().count() > MAX_LABEL_CHARS {
         return Err(ValidationError::LabelTooLong.into());
     }
+    // The store checks the viewer's grant again, atomically with the
+    // insert: an owner may have revoked or demoted them meanwhile.
     Ok(store
-        .create_transaction(NewTransaction {
-            account_id,
-            booking_date: input.booking_date,
-            value_date: input.value_date,
-            amount: input.amount,
-            label: label.to_owned(),
-            status: input.status,
-        })
+        .create_transaction(
+            viewer.user_id(),
+            NewTransaction {
+                account_id,
+                booking_date: input.booking_date,
+                value_date: input.value_date,
+                amount: input.amount,
+                label: label.to_owned(),
+                status: input.status,
+            },
+        )
         .await?)
 }
 
