@@ -34,13 +34,18 @@ pub async fn share_account(
         .await?
         .filter(|user| user.household_id == viewer.household_id())
         .ok_or(ServiceError::NotFound)?;
-    // The store refuses (atomically) to demote the last owner.
+    // The store checks again, atomically with the write, that the viewer
+    // may still share (another owner may have revoked them meanwhile) and
+    // refuses to demote the last owner.
     store
-        .set_account_access(AccountAccess {
-            account_id,
-            user_id: member.id,
-            permission,
-        })
+        .set_account_access(
+            viewer.user_id(),
+            AccountAccess {
+                account_id,
+                user_id: member.id,
+                permission,
+            },
+        )
         .await?;
     Ok(())
 }
@@ -56,8 +61,12 @@ pub async fn revoke_access(
     user_id: UserId,
 ) -> Result<(), ServiceError> {
     account_for(store, viewer, account_id, Action::Share).await?;
-    // The store refuses (atomically) to remove the last owner.
-    if store.revoke_account_access(account_id, user_id).await? {
+    // The store checks the viewer again and refuses to remove the last
+    // owner, atomically with the delete.
+    if store
+        .revoke_account_access(viewer.user_id(), account_id, user_id)
+        .await?
+    {
         Ok(())
     } else {
         Err(ServiceError::NotFound)

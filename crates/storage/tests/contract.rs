@@ -118,6 +118,59 @@ where
     drop_pg_schema(&options, &schema).await;
 }
 
+/// Like [`with_postgres`], on a server whose operator made every
+/// transaction REPEATABLE READ by default: the store's locked transactions
+/// must still read what committed before the lock.
+async fn with_postgres_repeatable_read<F, Fut>(test: F)
+where
+    F: FnOnce(Arc<dyn Store>) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let Some((options, schema)) = pg_schema().await else {
+        return;
+    };
+    let options = options.options([("default_transaction_isolation", "repeatable read")]);
+    let raw = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .expect("raw connect");
+    let (isolation, search_path): (String, String) =
+        sqlx::query_as("SELECT current_setting('default_transaction_isolation'), current_schema()")
+            .fetch_one(&raw)
+            .await
+            .expect("settings");
+    raw.close().await;
+    assert_eq!(isolation, "repeatable read", "the default must apply");
+    assert_eq!(search_path, schema, "the test schema must stay selected");
+    let store = SqlStore::connect_postgres(options.clone())
+        .await
+        .expect("connect postgres");
+    test(Arc::new(store.clone())).await;
+    store.close().await;
+    drop_pg_schema(&options, &schema).await;
+}
+
+/// The concurrency contracts again, on PostgreSQL with REPEATABLE READ as
+/// the server default.
+mod postgres_repeatable_read {
+    macro_rules! races {
+        ($($name:ident),* $(,)?) => {
+            $(#[tokio::test] async fn $name() {
+                super::with_postgres_repeatable_read(super::$name).await;
+            })*
+        };
+    }
+    races!(
+        concurrent_bootstrap,
+        concurrent_last_owner,
+        concurrent_duplicate_iban,
+        concurrent_share_and_revoke,
+        concurrent_delete_and_revoke,
+        concurrent_transaction_and_revoke,
+    );
+}
+
 /// Runs each listed contract on every backend.
 macro_rules! contracts {
     ($($name:ident),* $(,)?) => {
@@ -148,6 +201,11 @@ contracts!(
     concurrent_bootstrap,
     last_owner,
     concurrent_last_owner,
+    duplicate_iban_follows_visibility,
+    concurrent_duplicate_iban,
+    concurrent_share_and_revoke,
+    concurrent_delete_and_revoke,
+    concurrent_transaction_and_revoke,
 );
 
 // --- Helpers ----------------------------------------------------------
@@ -614,9 +672,8 @@ async fn accounts(store: Arc<dyn Store>) {
         "creator becomes owner"
     );
 
-    // The store does not enforce unique IBANs: a member must not learn that
-    // an IBAN is taken by an account they cannot see (services refuse
-    // duplicates among the visible accounts only).
+    // IBANs are unique only among the accounts the owner can see: a member
+    // must not learn that an IBAN is taken by an account they cannot see.
     let copy = store
         .create_account(
             checking(home, "Copy", Some("fr7600000000000000000000001")),
@@ -624,6 +681,18 @@ async fn accounts(store: Arc<dyn Store>) {
         )
         .await
         .expect("same IBAN, another member");
+    for (name, owner) in [("Alice twice", alice), ("Bob twice", bob)] {
+        let duplicate = store
+            .create_account(
+                checking(home, name, Some("FR76 0000 0000 0000 0000 0000 001")),
+                owner,
+            )
+            .await;
+        assert!(
+            matches!(duplicate, Err(StoreError::DuplicateIban)),
+            "an IBAN the owner already sees must be a duplicate"
+        );
+    }
     // No IBAN (or a blank one) is stored as none.
     let cash = store
         .create_account(
@@ -662,15 +731,46 @@ async fn accounts(store: Arc<dyn Store>) {
     );
 
     store
-        .create_transaction(manual(account.id, date(2026, 1, 2), -500, "Fake shop"))
+        .create_transaction(
+            alice,
+            manual(account.id, date(2026, 1, 2), -500, "Fake shop"),
+        )
         .await
         .expect("transaction");
-    assert!(store.delete_account(account.id).await.expect("delete"));
+    // Only an owner may delete, checked on the actor's own grant inside the
+    // transaction: none is `NotFound`, a lower one `Forbidden`.
+    let invisible = store.delete_account(bob, account.id).await;
     assert!(
-        !store
-            .delete_account(account.id)
+        matches!(invisible, Err(StoreError::NotFound)),
+        "an actor without a grant must get not found"
+    );
+    store
+        .set_account_access(
+            alice,
+            AccountAccess {
+                account_id: account.id,
+                user_id: bob,
+                permission: Permission::Write,
+            },
+        )
+        .await
+        .expect("share");
+    let writer = store.delete_account(bob, account.id).await;
+    assert!(
+        matches!(writer, Err(StoreError::Forbidden)),
+        "a writer may not delete"
+    );
+    assert!(
+        store
+            .delete_account(alice, account.id)
             .await
-            .expect("delete twice")
+            .expect("delete")
+    );
+    // Gone, with Alice's grant: deleting again is `NotFound`.
+    let twice = store.delete_account(alice, account.id).await;
+    assert!(
+        matches!(twice, Err(StoreError::NotFound)),
+        "deleting twice must be not found"
     );
     assert_eq!(store.get_account(account.id).await.expect("get"), None);
     assert!(
@@ -710,11 +810,14 @@ async fn account_access(store: Arc<dyn Store>) {
         .await
         .expect("joint");
     store
-        .set_account_access(AccountAccess {
-            account_id: joint.id,
-            user_id: bob,
-            permission: Permission::Read,
-        })
+        .set_account_access(
+            alice,
+            AccountAccess {
+                account_id: joint.id,
+                user_id: bob,
+                permission: Permission::Read,
+            },
+        )
         .await
         .expect("share");
 
@@ -732,11 +835,14 @@ async fn account_access(store: Arc<dyn Store>) {
 
     // One grant per pair: setting again changes it.
     store
-        .set_account_access(AccountAccess {
-            account_id: joint.id,
-            user_id: bob,
-            permission: Permission::Write,
-        })
+        .set_account_access(
+            alice,
+            AccountAccess {
+                account_id: joint.id,
+                user_id: bob,
+                permission: Permission::Write,
+            },
+        )
         .await
         .expect("upgrade");
     let joint_grants = store.list_account_access(joint.id).await.expect("grants");
@@ -746,34 +852,64 @@ async fn account_access(store: Arc<dyn Store>) {
         Some(Permission::Write)
     );
 
-    for missing in [
-        AccountAccess {
-            account_id: joint.id,
-            user_id: unknown_user(),
-            permission: Permission::Read,
-        },
-        AccountAccess {
-            account_id: AccountId::from_u128(9),
-            user_id: bob,
-            permission: Permission::Read,
-        },
+    let result = store
+        .set_account_access(
+            alice,
+            AccountAccess {
+                account_id: joint.id,
+                user_id: unknown_user(),
+                permission: Permission::Read,
+            },
+        )
+        .await;
+    assert!(
+        matches!(result, Err(StoreError::MissingReference)),
+        "a grant to an unknown user must be a missing reference"
+    );
+
+    // The actor's own grant is checked inside the transaction: none (an
+    // account they cannot see, or an unknown one) is `NotFound`, before
+    // anything else is looked at; one that does not allow sharing is
+    // `Forbidden`.
+    let before = store.list_household_access(home).await.expect("grants");
+    let to_alice = |account_id| AccountAccess {
+        account_id,
+        user_id: alice,
+        permission: Permission::Read,
+    };
+    for (actor, account_id) in [
+        (bob, private.id),
+        (alice, AccountId::from_u128(9)),
+        (unknown_user(), joint.id),
     ] {
-        let result = store.set_account_access(missing).await;
+        let set = store.set_account_access(actor, to_alice(account_id)).await;
+        let revoke = store.revoke_account_access(actor, account_id, alice).await;
         assert!(
-            matches!(result, Err(StoreError::MissingReference)),
-            "a grant on an unknown account or user must be a missing reference"
+            matches!(set, Err(StoreError::NotFound)) && matches!(revoke, Err(StoreError::NotFound)),
+            "an actor without a grant must get not found"
         );
     }
+    let set = store.set_account_access(bob, to_alice(joint.id)).await;
+    let revoke = store.revoke_account_access(bob, joint.id, alice).await;
+    assert!(
+        matches!(set, Err(StoreError::Forbidden)) && matches!(revoke, Err(StoreError::Forbidden)),
+        "a writer may not share"
+    );
+    assert_eq!(
+        store.list_household_access(home).await.expect("grants"),
+        before,
+        "refused changes wrote nothing"
+    );
 
     assert!(
         store
-            .revoke_account_access(joint.id, bob)
+            .revoke_account_access(alice, joint.id, bob)
             .await
             .expect("revoke")
     );
     assert!(
         !store
-            .revoke_account_access(joint.id, bob)
+            .revoke_account_access(alice, joint.id, bob)
             .await
             .expect("revoke twice")
     );
@@ -782,30 +918,34 @@ async fn account_access(store: Arc<dyn Store>) {
 }
 
 async fn transactions(store: Arc<dyn Store>) {
-    let (home, alice, _) = household(&*store).await;
+    let (home, alice, bob) = household(&*store).await;
     let account = store
         .create_account(checking(home, "Alice checking", None), alice)
         .await
         .expect("account");
     let older = store
-        .create_transaction(NewTransaction {
-            value_date: Some(date(2026, 1, 3)),
-            status: TransactionStatus::Pending,
-            ..manual(account.id, date(2026, 1, 1), i64::MIN, "Fake bakery, été")
-        })
+        .create_transaction(
+            alice,
+            NewTransaction {
+                value_date: Some(date(2026, 1, 3)),
+                status: TransactionStatus::Pending,
+                ..manual(account.id, date(2026, 1, 1), i64::MIN, "Fake bakery, été")
+            },
+        )
         .await
         .expect("older");
     let newer = store
-        .create_transaction(manual(
-            account.id,
-            date(2026, 2, 1),
-            i64::MAX,
-            "Fake salary",
-        ))
+        .create_transaction(
+            alice,
+            manual(account.id, date(2026, 2, 1), i64::MAX, "Fake salary"),
+        )
         .await
         .expect("newer");
     let same_day = store
-        .create_transaction(manual(account.id, date(2026, 2, 1), 0, "Fake refund"))
+        .create_transaction(
+            alice,
+            manual(account.id, date(2026, 2, 1), 0, "Fake refund"),
+        )
         .await
         .expect("same day");
 
@@ -842,12 +982,49 @@ async fn transactions(store: Arc<dyn Store>) {
         1
     );
 
+    // The actor's own grant is checked inside the transaction: none (an
+    // unknown account, or one they cannot see) is `NotFound`, a read-only
+    // grant is `Forbidden`.
     let orphan = store
-        .create_transaction(manual(AccountId::from_u128(3), date(2026, 1, 1), 1, "x"))
+        .create_transaction(
+            alice,
+            manual(AccountId::from_u128(3), date(2026, 1, 1), 1, "x"),
+        )
+        .await;
+    assert!(matches!(orphan, Err(StoreError::NotFound)), "{orphan:?}");
+    let invisible = store
+        .create_transaction(bob, manual(account.id, date(2026, 1, 1), 1, "x"))
         .await;
     assert!(
-        matches!(orphan, Err(StoreError::MissingReference)),
-        "{orphan:?}"
+        matches!(invisible, Err(StoreError::NotFound)),
+        "{invisible:?}"
+    );
+    store
+        .set_account_access(
+            alice,
+            AccountAccess {
+                account_id: account.id,
+                user_id: bob,
+                permission: Permission::Read,
+            },
+        )
+        .await
+        .expect("share read-only");
+    let read_only = store
+        .create_transaction(bob, manual(account.id, date(2026, 1, 1), 1, "x"))
+        .await;
+    assert!(
+        matches!(read_only, Err(StoreError::Forbidden)),
+        "{read_only:?}"
+    );
+    assert_eq!(
+        store
+            .list_transactions(account.id, 10)
+            .await
+            .expect("list")
+            .len(),
+        3,
+        "refused transactions wrote nothing"
     );
 }
 
@@ -875,27 +1052,39 @@ async fn booked_totals(store: Arc<dyn Store>) {
     let booked = [i64::MAX, i64::MAX, 1, -42, i64::MIN, -1, i64::MAX];
     for (day, minor) in (1u8..).zip(booked) {
         store
-            .create_transaction(manual(busy.id, date(2026, 3, day), minor, "Fake entry"))
+            .create_transaction(
+                alice,
+                manual(busy.id, date(2026, 3, day), minor, "Fake entry"),
+            )
             .await
             .expect("booked");
     }
     // Left out: a pending transaction and one in another currency.
     store
-        .create_transaction(NewTransaction {
-            status: TransactionStatus::Pending,
-            ..manual(busy.id, date(2026, 3, 20), 1_000, "Fake pending")
-        })
+        .create_transaction(
+            alice,
+            NewTransaction {
+                status: TransactionStatus::Pending,
+                ..manual(busy.id, date(2026, 3, 20), 1_000, "Fake pending")
+            },
+        )
         .await
         .expect("pending");
     store
-        .create_transaction(NewTransaction {
-            amount: Money::from_minor(5_000, Currency::USD),
-            ..manual(busy.id, date(2026, 3, 21), 0, "Fake dollars")
-        })
+        .create_transaction(
+            alice,
+            NewTransaction {
+                amount: Money::from_minor(5_000, Currency::USD),
+                ..manual(busy.id, date(2026, 3, 21), 0, "Fake dollars")
+            },
+        )
         .await
         .expect("other currency");
     store
-        .create_transaction(manual(other.id, date(2026, 3, 1), -2_550, "Fake grocer"))
+        .create_transaction(
+            bob,
+            manual(other.id, date(2026, 3, 1), -2_550, "Fake grocer"),
+        )
         .await
         .expect("other account");
 
@@ -911,7 +1100,7 @@ async fn booked_totals(store: Arc<dyn Store>) {
     assert_eq!(totals.len(), 2);
 
     // Totals follow the account out.
-    assert!(store.delete_account(busy.id).await.expect("delete"));
+    assert!(store.delete_account(alice, busy.id).await.expect("delete"));
     let totals = store.booked_totals(home).await.expect("after delete");
     assert_eq!(totals.len(), 1);
     assert_eq!(
@@ -931,7 +1120,7 @@ async fn q_date(store: Arc<dyn Store>) {
         .expect("account");
     for edge in [date(0, 1, 1), date(9999, 12, 31)] {
         let stored = store
-            .create_transaction(manual(account.id, edge, 1, "Edge"))
+            .create_transaction(alice, manual(account.id, edge, 1, "Edge"))
             .await
             .expect("edge years are storable");
         let fetched = store.get_transaction(stored.id).await.expect("get");
@@ -939,17 +1128,20 @@ async fn q_date(store: Arc<dyn Store>) {
     }
     for outside in [date(-1, 12, 31), date(10_000, 1, 1)] {
         let booking = store
-            .create_transaction(manual(account.id, outside, 1, "Out"))
+            .create_transaction(alice, manual(account.id, outside, 1, "Out"))
             .await;
         assert!(
             matches!(booking, Err(StoreError::DateOutOfRange(d)) if d == outside),
             "{booking:?}"
         );
         let value = store
-            .create_transaction(NewTransaction {
-                value_date: Some(outside),
-                ..manual(account.id, date(2026, 1, 1), 1, "Out")
-            })
+            .create_transaction(
+                alice,
+                NewTransaction {
+                    value_date: Some(outside),
+                    ..manual(account.id, date(2026, 1, 1), 1, "Out")
+                },
+            )
             .await;
         assert!(
             matches!(value, Err(StoreError::DateOutOfRange(_))),
@@ -1002,12 +1194,12 @@ async fn last_owner(store: Arc<dyn Store>) {
         user_id: alice,
         permission: Permission::Write,
     };
-    let result = store.set_account_access(demote).await;
+    let result = store.set_account_access(alice, demote).await;
     assert!(
         matches!(result, Err(StoreError::LastOwner)),
         "demoting the last owner must be refused"
     );
-    let result = store.revoke_account_access(account.id, alice).await;
+    let result = store.revoke_account_access(alice, account.id, alice).await;
     assert!(
         matches!(result, Err(StoreError::LastOwner)),
         "revoking the last owner must be refused"
@@ -1021,32 +1213,35 @@ async fn last_owner(store: Arc<dyn Store>) {
 
     // With a second owner, either one may step down.
     store
-        .set_account_access(AccountAccess {
-            account_id: account.id,
-            user_id: bob,
-            permission: Permission::Owner,
-        })
+        .set_account_access(
+            alice,
+            AccountAccess {
+                account_id: account.id,
+                user_id: bob,
+                permission: Permission::Owner,
+            },
+        )
         .await
         .expect("second owner");
     store
-        .set_account_access(demote)
+        .set_account_access(alice, demote)
         .await
         .expect("demote alice");
     assert!(
         store
-            .revoke_account_access(account.id, alice)
+            .revoke_account_access(bob, account.id, alice)
             .await
             .expect("revoke alice")
     );
-    let result = store.revoke_account_access(account.id, bob).await;
+    let result = store.revoke_account_access(bob, account.id, bob).await;
     assert!(
         matches!(result, Err(StoreError::LastOwner)),
         "revoking the last owner must be refused"
     );
 }
 
-/// Two owners revoke each other at the same time: one must win, and the
-/// account keeps exactly one owner.
+/// Two owners step down at the same time: one must win, and the account
+/// keeps exactly one owner.
 async fn concurrent_last_owner(store: Arc<dyn Store>) {
     let (home, alice, bob) = household(&*store).await;
     for round in 0..8 {
@@ -1055,18 +1250,21 @@ async fn concurrent_last_owner(store: Arc<dyn Store>) {
             .await
             .expect("account");
         store
-            .set_account_access(AccountAccess {
-                account_id: account.id,
-                user_id: bob,
-                permission: Permission::Owner,
-            })
+            .set_account_access(
+                alice,
+                AccountAccess {
+                    account_id: account.id,
+                    user_id: bob,
+                    permission: Permission::Owner,
+                },
+            )
             .await
             .expect("second owner");
         let mut tasks = Vec::new();
         for user in [alice, bob] {
             let store = Arc::clone(&store);
             tasks.push(tokio::spawn(async move {
-                store.revoke_account_access(account.id, user).await
+                store.revoke_account_access(user, account.id, user).await
             }));
         }
         let mut revoked = 0;
@@ -1084,6 +1282,254 @@ async fn concurrent_last_owner(store: Arc<dyn Store>) {
             .filter(|grant| grant.permission == Permission::Owner)
             .count();
         assert_eq!(owners, 1, "the account keeps an owner");
+    }
+}
+
+/// A duplicate IBAN counts only on accounts the owner holds a grant on,
+/// whatever its permission, and stops counting once the grant is gone.
+async fn duplicate_iban_follows_visibility(store: Arc<dyn Store>) {
+    let (home, alice, bob) = household(&*store).await;
+    let iban = "FR7600000000000000000000097";
+    let joint = store
+        .create_account(checking(home, "Alice joint", Some(iban)), alice)
+        .await
+        .expect("alice");
+    store
+        .set_account_access(
+            alice,
+            AccountAccess {
+                account_id: joint.id,
+                user_id: bob,
+                permission: Permission::Read,
+            },
+        )
+        .await
+        .expect("share");
+    let refused = store
+        .create_account(checking(home, "Bob copy", Some(iban)), bob)
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::DuplicateIban)),
+        "a shared account counts as seen"
+    );
+    store
+        .revoke_account_access(alice, joint.id, bob)
+        .await
+        .expect("revoke");
+    store
+        .create_account(checking(home, "Bob copy", Some(iban)), bob)
+        .await
+        .expect("no longer visible: accepted");
+}
+
+/// How many times each race below is replayed: enough to hit the window
+/// between a check and its write without the lock, still fast.
+const RACE_ROUNDS: usize = 16;
+
+/// Alice creates the same IBAN twice at once: exactly one creation wins.
+async fn concurrent_duplicate_iban(store: Arc<dyn Store>) {
+    let (home, alice, _) = household(&*store).await;
+    for round in 0..RACE_ROUNDS {
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let mut tasks = Vec::new();
+        for name in ["First", "Second"] {
+            let (store, barrier) = (Arc::clone(&store), Arc::clone(&barrier));
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                store
+                    .create_account(
+                        checking(home, name, Some("FR76 0000 0000 0000 0000 0000 097")),
+                        alice,
+                    )
+                    .await
+            }));
+        }
+        let mut created = Vec::new();
+        for task in tasks {
+            match task.await.expect("task") {
+                Ok(account) => created.push(account.id),
+                Err(StoreError::DuplicateIban) => {}
+                Err(other) => panic!("round {round}: unexpected error {:?}", other.class()),
+            }
+        }
+        assert_eq!(created.len(), 1, "round {round}: exactly one account");
+        for id in created {
+            assert!(store.delete_account(alice, id).await.expect("clean up"));
+        }
+    }
+}
+
+/// Alice revokes Bob while Bob, a co-owner until then, re-grants himself:
+/// Bob's permission is checked inside the write transaction, so once the
+/// revocation commits his grant cannot come back.
+async fn concurrent_share_and_revoke(store: Arc<dyn Store>) {
+    let (home, alice, bob) = household(&*store).await;
+    for round in 0..RACE_ROUNDS {
+        let account = store
+            .create_account(checking(home, &format!("Joint {round}"), None), alice)
+            .await
+            .expect("account");
+        let bob_owner = AccountAccess {
+            account_id: account.id,
+            user_id: bob,
+            permission: Permission::Owner,
+        };
+        store
+            .set_account_access(alice, bob_owner)
+            .await
+            .expect("second owner");
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let revoke = {
+            let (store, barrier) = (Arc::clone(&store), Arc::clone(&barrier));
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store.revoke_account_access(alice, account.id, bob).await
+            })
+        };
+        let regrant = {
+            let (store, barrier) = (Arc::clone(&store), Arc::clone(&barrier));
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store.set_account_access(bob, bob_owner).await
+            })
+        };
+        assert!(
+            matches!(revoke.await.expect("task"), Ok(true)),
+            "round {round}: the revocation goes through"
+        );
+        match regrant.await.expect("task") {
+            Ok(()) | Err(StoreError::NotFound) => {}
+            Err(other) => panic!("round {round}: unexpected error {:?}", other.class()),
+        }
+        let grants = store.list_account_access(account.id).await.expect("grants");
+        assert_eq!(
+            permission_on(&grants, bob, account.id),
+            None,
+            "round {round}: a revoked member got their access back"
+        );
+    }
+}
+
+/// Alice revokes Bob while Bob, a co-owner until then, deletes the account:
+/// one of them wins, and a revoked Bob never deletes it.
+async fn concurrent_delete_and_revoke(store: Arc<dyn Store>) {
+    let (home, alice, bob) = household(&*store).await;
+    for round in 0..RACE_ROUNDS {
+        let account = store
+            .create_account(checking(home, &format!("Joint {round}"), None), alice)
+            .await
+            .expect("account");
+        store
+            .set_account_access(
+                alice,
+                AccountAccess {
+                    account_id: account.id,
+                    user_id: bob,
+                    permission: Permission::Owner,
+                },
+            )
+            .await
+            .expect("second owner");
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let revoke = {
+            let (store, barrier) = (Arc::clone(&store), Arc::clone(&barrier));
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store.revoke_account_access(alice, account.id, bob).await
+            })
+        };
+        let delete = {
+            let (store, barrier) = (Arc::clone(&store), Arc::clone(&barrier));
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store.delete_account(bob, account.id).await
+            })
+        };
+        let revoked = revoke.await.expect("task");
+        let deleted = delete.await.expect("task");
+        let exists = store.get_account(account.id).await.expect("get").is_some();
+        match (revoked, deleted) {
+            // Bob deleted first; Alice's grant went with the account.
+            (Err(StoreError::NotFound), Ok(true)) => assert!(!exists, "round {round}"),
+            // Alice revoked first; Bob's delete is refused.
+            (Ok(true), Err(StoreError::NotFound)) => assert!(exists, "round {round}"),
+            (revoked, deleted) => panic!(
+                "round {round}: unexpected outcome (revoke ok: {}, delete ok: {})",
+                revoked.is_ok(),
+                deleted.is_ok()
+            ),
+        }
+    }
+}
+
+/// Bob, a writer, keeps adding transactions while Alice revokes him and
+/// then counts them: no transaction may appear after the revocation she
+/// observed.
+async fn concurrent_transaction_and_revoke(store: Arc<dyn Store>) {
+    let (home, alice, bob) = household(&*store).await;
+    for round in 0..RACE_ROUNDS {
+        let account = store
+            .create_account(checking(home, &format!("Joint {round}"), None), alice)
+            .await
+            .expect("account");
+        store
+            .set_account_access(
+                alice,
+                AccountAccess {
+                    account_id: account.id,
+                    user_id: bob,
+                    permission: Permission::Write,
+                },
+            )
+            .await
+            .expect("writer");
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let writes = {
+            let (store, barrier) = (Arc::clone(&store), Arc::clone(&barrier));
+            tokio::spawn(async move {
+                barrier.wait().await;
+                let mut added = 0usize;
+                for _ in 0..200 {
+                    let entry = manual(account.id, date(2026, 1, 1), -100, "Fake shop");
+                    match store.create_transaction(bob, entry).await {
+                        Ok(_) => added += 1,
+                        Err(StoreError::NotFound) => return added,
+                        Err(other) => panic!("unexpected error {:?}", other.class()),
+                    }
+                }
+                panic!("the revocation never took effect");
+            })
+        };
+        let seen = {
+            let (store, barrier) = (Arc::clone(&store), Arc::clone(&barrier));
+            tokio::spawn(async move {
+                barrier.wait().await;
+                tokio::task::yield_now().await;
+                assert!(
+                    store
+                        .revoke_account_access(alice, account.id, bob)
+                        .await
+                        .expect("revoke")
+                );
+                store
+                    .list_transactions(account.id, 1000)
+                    .await
+                    .expect("list")
+                    .len()
+            })
+        };
+        let added = writes.await.expect("task");
+        let seen = seen.await.expect("task");
+        let total = store
+            .list_transactions(account.id, 1000)
+            .await
+            .expect("list")
+            .len();
+        assert_eq!(total, added, "round {round}: every success was stored");
+        assert_eq!(
+            total, seen,
+            "round {round}: a transaction landed after the revocation"
+        );
     }
 }
 
@@ -1162,6 +1608,48 @@ async fn sqlite_file_shared_by_two_stores_bootstraps_once() {
         a.is_ok() != b.is_ok() && conflicts == 1,
         "exactly one bootstrap must win and the other must conflict"
     );
+    first.close().await;
+    second.close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Two stores on one file creating the same IBAN for the same owner at
+/// once: one wins, the other gets `DuplicateIban`, not a database error
+/// from acting on a stale snapshot.
+#[tokio::test]
+async fn sqlite_file_shared_by_two_stores_refuses_duplicate_iban() {
+    let dir = temp_dir();
+    let path = dir.join("solde.db");
+    let first = SqlStore::open_sqlite_file(&path).await.expect("first open");
+    let (home, alice) = first
+        .bootstrap("Test home", member("Alice Test", "alice@example.test"))
+        .await
+        .expect("bootstrap");
+    let second = SqlStore::open_sqlite_file(&path)
+        .await
+        .expect("second open");
+    for round in 0..RACE_ROUNDS {
+        let iban = Some("FR7600000000000000000000097");
+        let (a, b) = tokio::join!(
+            first.create_account(checking(home.id, "First", iban), alice.id),
+            second.create_account(checking(home.id, "Second", iban), alice.id)
+        );
+        let duplicates = [&a, &b]
+            .iter()
+            .filter(|r| matches!(r, Err(StoreError::DuplicateIban)))
+            .count();
+        assert!(
+            a.is_ok() != b.is_ok() && duplicates == 1,
+            "round {round}: exactly one creation must win and the other must be a duplicate"
+        );
+        let created = a.or(b).expect("one account");
+        assert!(
+            first
+                .delete_account(alice.id, created.id)
+                .await
+                .expect("clean up")
+        );
+    }
     first.close().await;
     second.close().await;
     let _ = std::fs::remove_dir_all(dir);

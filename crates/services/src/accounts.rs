@@ -91,22 +91,7 @@ pub async fn create_account(
         .filter(|iban| !iban.is_empty());
     let balance_minor = input.balance_minor.map(check_amount).transpose()?;
     if let Some(iban) = &iban {
-        let normalized = validate_iban(iban)?;
-        let visible = visible_account_ids(store, viewer).await?;
-        let taken = store
-            .list_accounts(viewer.household_id())
-            .await?
-            .iter()
-            .filter(|account| visible.contains_key(&account.id))
-            .any(|account| {
-                account
-                    .iban
-                    .as_deref()
-                    .is_some_and(|other| normalize_iban(other) == normalized)
-            });
-        if taken {
-            return Err(ServiceError::DuplicateIban);
-        }
+        validate_iban(iban)?;
     }
     let account = NewAccount {
         household_id: viewer.household_id(),
@@ -116,6 +101,9 @@ pub async fn create_account(
         currency: input.currency,
         balance_minor,
     };
+    // The store refuses a duplicate among the accounts the viewer holds a
+    // grant on (exactly what `visible_account_ids` shows them), atomically
+    // with the insert, so two concurrent creations cannot both pass.
     let account = store.create_account(account, viewer.user_id()).await?;
     // A new account has no transactions yet.
     Ok(with_balance(account, Permission::Owner, &HashMap::new()))
@@ -198,7 +186,9 @@ pub async fn delete_account(
     account_id: AccountId,
 ) -> Result<(), ServiceError> {
     account_for(store, viewer, account_id, Action::Delete).await?;
-    if store.delete_account(account_id).await? {
+    // The store checks the viewer's grant again, atomically with the
+    // delete: another owner may have revoked them meanwhile.
+    if store.delete_account(viewer.user_id(), account_id).await? {
         Ok(())
     } else {
         Err(ServiceError::NotFound)

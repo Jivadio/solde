@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use chrono::{NaiveDate, Utc};
 use solde_core_domain::{
-    Account, AccountAccess, AccountId, AccountKind, CategoryId, CategorySource, Currency,
+    Account, AccountAccess, AccountId, AccountKind, Action, CategoryId, CategorySource, Currency,
     Household, HouseholdId, Money, Permission, Role, Transaction, TransactionId, TransactionStatus,
     User, UserId, normalize_iban,
 };
@@ -143,8 +143,10 @@ where
     for<'q> Option<DB::Timestamp>: sqlx::Encode<'q, DB>,
 {
     /// Starts a write transaction that must not interleave with another
-    /// process (migrations, bootstrap, access changes): it holds the write
-    /// lock before its first read, so it never acts on a stale snapshot.
+    /// process (migrations, bootstrap, access changes, account deletion,
+    /// manual transactions, account creation with an IBAN): it holds the
+    /// write lock before its first read, so it never acts on a stale
+    /// snapshot.
     async fn begin_exclusive(&self) -> Result<sqlx::Transaction<'static, DB>, StoreError> {
         let mut tx = match DB::BEGIN_EXCLUSIVE {
             Some(statement) => self.writer.begin_with(statement).await?,
@@ -366,6 +368,37 @@ where
         .execute(executor)
         .await?;
         Ok(DB::rows_affected(&result) > 0)
+    }
+
+    /// Fails unless `actor`'s grant on the account allows `action` right
+    /// now: [`StoreError::NotFound`] without a grant (the account is
+    /// invisible to them, or does not exist), [`StoreError::Forbidden`]
+    /// when their permission is too low. Called first inside a
+    /// [`Self::begin_exclusive`] transaction, so it sees every change
+    /// committed before it (such as another owner revoking `actor`) and no
+    /// access change can commit before the write does.
+    async fn ensure_actor_allows(
+        tx: &mut sqlx::Transaction<'_, DB>,
+        actor: UserId,
+        account_id: AccountId,
+        action: Action,
+    ) -> Result<(), StoreError> {
+        let row = sqlx::query(
+            "SELECT permission FROM account_access WHERE account_id = $1 AND user_id = $2",
+        )
+        .bind(Self::id(account_id.as_u128()))
+        .bind(Self::id(actor.as_u128()))
+        .fetch_optional(&mut **tx)
+        .await?;
+        let Some(row) = row else {
+            return Err(StoreError::NotFound);
+        };
+        let permission = permission_from_text(&row.try_get::<String, _>("permission")?)?;
+        if permission.allows(action) {
+            Ok(())
+        } else {
+            Err(StoreError::Forbidden)
+        }
     }
 
     /// Fails with [`StoreError::LastOwner`] when the account has no owner
@@ -788,7 +821,29 @@ where
                 .balance_minor
                 .map(|minor| Money::from_minor(minor, account.currency)),
         };
-        let mut tx = self.writer.begin().await?;
+        let mut tx = match &iban_normalized {
+            // Serialized with every other such creation, so the duplicate
+            // check still holds when the insert commits.
+            Some(normalized) => {
+                let mut tx = self.begin_exclusive().await?;
+                let taken: i64 = sqlx::query(
+                    "SELECT COUNT(*) AS n FROM accounts a \
+                     JOIN account_access aa ON aa.account_id = a.id \
+                     WHERE a.household_id = $1 AND aa.user_id = $2 AND a.iban_normalized = $3",
+                )
+                .bind(Self::id(created.household_id.as_u128()))
+                .bind(Self::id(owner.as_u128()))
+                .bind(normalized.clone())
+                .fetch_one(&mut *tx)
+                .await?
+                .try_get("n")?;
+                if taken > 0 {
+                    return Err(StoreError::DuplicateIban);
+                }
+                tx
+            }
+            None => self.writer.begin().await?,
+        };
         sqlx::query(
             "INSERT INTO accounts (id, household_id, kind, name, iban, iban_normalized, \
              currency, balance_minor, created_at) \
@@ -837,11 +892,14 @@ where
         .collect()
     }
 
-    async fn delete_account(&self, id: AccountId) -> Result<bool, StoreError> {
+    async fn delete_account(&self, actor: UserId, id: AccountId) -> Result<bool, StoreError> {
+        let mut tx = self.begin_exclusive().await?;
+        Self::ensure_actor_allows(&mut tx, actor, id, Action::Delete).await?;
         let result = sqlx::query("DELETE FROM accounts WHERE id = $1")
             .bind(Self::id(id.as_u128()))
-            .execute(&self.writer)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(DB::rows_affected(&result) > 0)
     }
 
@@ -878,8 +936,13 @@ where
         .collect()
     }
 
-    async fn set_account_access(&self, access: AccountAccess) -> Result<(), StoreError> {
+    async fn set_account_access(
+        &self,
+        actor: UserId,
+        access: AccountAccess,
+    ) -> Result<(), StoreError> {
         let mut tx = self.begin_exclusive().await?;
+        Self::ensure_actor_allows(&mut tx, actor, access.account_id, Action::Share).await?;
         let granted = Self::insert_access(
             &mut *tx,
             access.account_id,
@@ -897,10 +960,12 @@ where
 
     async fn revoke_account_access(
         &self,
+        actor: UserId,
         account_id: AccountId,
         user_id: UserId,
     ) -> Result<bool, StoreError> {
         let mut tx = self.begin_exclusive().await?;
+        Self::ensure_actor_allows(&mut tx, actor, account_id, Action::Share).await?;
         let result =
             sqlx::query("DELETE FROM account_access WHERE account_id = $1 AND user_id = $2")
                 .bind(Self::id(account_id.as_u128()))
@@ -917,6 +982,7 @@ where
 
     async fn create_transaction(
         &self,
+        actor: UserId,
         transaction: NewTransaction,
     ) -> Result<Transaction, StoreError> {
         let booking_date = date_to_db(transaction.booking_date)?;
@@ -933,6 +999,14 @@ where
             category: None,
             category_source: CategorySource::None,
         };
+        let mut tx = self.begin_exclusive().await?;
+        Self::ensure_actor_allows(
+            &mut tx,
+            actor,
+            created.account_id,
+            Action::AddManualTransaction,
+        )
+        .await?;
         sqlx::query(
             "INSERT INTO transactions (id, account_id, booking_date, value_date, amount_minor, \
              currency, label, status, remote_id, category_id, category_source, created_at) \
@@ -948,8 +1022,9 @@ where
         .bind(status_to_text(created.status).to_owned())
         .bind(category_source_to_text(created.category_source).to_owned())
         .bind(Self::ts(now()))
-        .execute(&self.writer)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(created)
     }
 

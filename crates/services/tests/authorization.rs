@@ -141,6 +141,10 @@ on_every_backend!(
     sharing_rules,
     bootstrap_and_invitations,
     iban_duplicates_never_leak,
+    concurrent_duplicate_iban,
+    concurrent_share_and_revoke,
+    concurrent_delete_and_revoke,
+    concurrent_transaction_and_revoke,
     amounts_and_ibans_are_validated,
     current_balances,
 );
@@ -640,6 +644,188 @@ async fn iban_duplicates_never_leak(store: &dyn Store) {
         |err| matches!(err, ServiceError::DuplicateIban),
         "bob duplicate",
     );
+}
+
+/// How many times each race below is replayed: enough to hit the window
+/// between the check and the write without the fix, still fast.
+const RACE_ROUNDS: usize = 20;
+
+/// Alice creates the same IBAN twice at once: the duplicate check and the
+/// insert are one atomic step, so exactly one creation wins.
+async fn concurrent_duplicate_iban(store: &dyn Store) {
+    let (_, members) =
+        household(store, &[("Alice Test", "alice@example.test", Role::Member)]).await;
+    let alice = &members[0];
+    for round in 0..RACE_ROUNDS {
+        let (first, second) = tokio::join!(
+            solde_services::create_account(store, alice, with_iban("First", FAKE_IBAN)),
+            solde_services::create_account(store, alice, with_iban("Second", FAKE_IBAN)),
+        );
+        let mut created = Vec::new();
+        for result in [first, second] {
+            match result {
+                Ok(visible) => created.push(visible.account.id),
+                Err(ServiceError::DuplicateIban) => {}
+                Err(err) => panic!("round {round}: unexpected error {err:?}"),
+            }
+        }
+        assert_eq!(created.len(), 1, "round {round}: exactly one account");
+        for id in created {
+            solde_services::delete_account(store, alice, id)
+                .await
+                .expect("clean up");
+        }
+    }
+}
+
+/// Alice revokes Bob while Bob, a co-owner until then, re-grants himself:
+/// Bob's permission is checked inside the write, so a revocation that went
+/// through is never undone.
+async fn concurrent_share_and_revoke(store: &dyn Store) {
+    let (_, members) = household(
+        store,
+        &[
+            ("Alice Test", "alice@example.test", Role::Member),
+            ("Bob Test", "bob@example.test", Role::Member),
+        ],
+    )
+    .await;
+    let (alice, bob) = (&members[0], &members[1]);
+    for round in 0..RACE_ROUNDS {
+        let joint = solde_services::create_account(store, alice, account("Joint", Currency::EUR))
+            .await
+            .expect("joint")
+            .account
+            .id;
+        solde_services::share_account(store, alice, joint, bob.user_id(), Permission::Owner)
+            .await
+            .expect("bob co-owner");
+        let (revoked, regranted) = tokio::join!(
+            solde_services::revoke_access(store, alice, joint, bob.user_id()),
+            solde_services::share_account(store, bob, joint, bob.user_id(), Permission::Owner),
+        );
+        if let Err(err) = revoked {
+            panic!("round {round}: revoke failed: {err:?}");
+        }
+        match regranted {
+            Ok(()) | Err(ServiceError::NotFound) => {}
+            Err(err) => panic!("round {round}: unexpected error {err:?}"),
+        }
+        let access = solde_services::list_account_access(store, alice, joint)
+            .await
+            .expect("access");
+        assert!(
+            access.iter().all(|grant| grant.user_id != bob.user_id()),
+            "round {round}: a revoked member got their access back"
+        );
+        assert_not_found(
+            solde_services::get_account(store, bob, joint).await,
+            "bob no longer sees the account",
+        );
+    }
+}
+
+/// Alice revokes Bob while Bob, a co-owner until then, deletes the
+/// account: one of them wins, and a revoked Bob never deletes it.
+async fn concurrent_delete_and_revoke(store: &dyn Store) {
+    let (_, members) = household(
+        store,
+        &[
+            ("Alice Test", "alice@example.test", Role::Member),
+            ("Bob Test", "bob@example.test", Role::Member),
+        ],
+    )
+    .await;
+    let (alice, bob) = (&members[0], &members[1]);
+    for round in 0..RACE_ROUNDS {
+        let joint = solde_services::create_account(store, alice, account("Joint", Currency::EUR))
+            .await
+            .expect("joint")
+            .account
+            .id;
+        solde_services::share_account(store, alice, joint, bob.user_id(), Permission::Owner)
+            .await
+            .expect("bob co-owner");
+        let (revoked, deleted) = tokio::join!(
+            solde_services::revoke_access(store, alice, joint, bob.user_id()),
+            solde_services::delete_account(store, bob, joint),
+        );
+        let exists = solde_services::get_account(store, alice, joint)
+            .await
+            .is_ok();
+        match (revoked, deleted) {
+            (Err(ServiceError::NotFound), Ok(())) => assert!(!exists, "round {round}"),
+            (Ok(()), Err(ServiceError::NotFound)) => assert!(exists, "round {round}"),
+            (revoked, deleted) => panic!(
+                "round {round}: unexpected outcome (revoke ok: {}, delete ok: {})",
+                revoked.is_ok(),
+                deleted.is_ok()
+            ),
+        }
+    }
+}
+
+/// Bob, a writer, keeps adding transactions while Alice revokes him and
+/// then counts them: no transaction may appear after the revocation she
+/// observed.
+async fn concurrent_transaction_and_revoke(store: &dyn Store) {
+    let (_, members) = household(
+        store,
+        &[
+            ("Alice Test", "alice@example.test", Role::Member),
+            ("Bob Test", "bob@example.test", Role::Member),
+        ],
+    )
+    .await;
+    let (alice, bob) = (&members[0], &members[1]);
+    for round in 0..RACE_ROUNDS {
+        let joint = solde_services::create_account(store, alice, account("Joint", Currency::EUR))
+            .await
+            .expect("joint")
+            .account
+            .id;
+        solde_services::share_account(store, alice, joint, bob.user_id(), Permission::Write)
+            .await
+            .expect("bob writer");
+        let writes = async {
+            let mut added = 0usize;
+            for _ in 0..200 {
+                match solde_services::create_transaction(
+                    store,
+                    bob,
+                    joint,
+                    spending(-100, "Fake shop"),
+                )
+                .await
+                {
+                    Ok(_) => added += 1,
+                    Err(ServiceError::NotFound) => return added,
+                    Err(err) => panic!("round {round}: unexpected error {err:?}"),
+                }
+            }
+            panic!("round {round}: the revocation never took effect");
+        };
+        let revoke_then_count = async {
+            tokio::task::yield_now().await;
+            solde_services::revoke_access(store, alice, joint, bob.user_id())
+                .await
+                .expect("revoke");
+            solde_services::list_transactions(store, alice, joint, 1000)
+                .await
+                .expect("list")
+                .len()
+        };
+        let (added, seen) = tokio::join!(writes, revoke_then_count);
+        let total = solde_services::list_transactions(store, alice, joint, 1000)
+            .await
+            .expect("list")
+            .len();
+        assert_eq!(total, added, "round {round}: every success was stored");
+        assert_eq!(
+            total, seen,
+            "round {round}: a transaction landed after the revocation"
+        );
+    }
 }
 
 async fn amounts_and_ibans_are_validated(store: &dyn Store) {

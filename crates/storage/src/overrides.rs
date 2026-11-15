@@ -10,7 +10,7 @@
 //! | Timestamp column type | `TIMESTAMPTZ` | fixed-width ISO 8601 `TEXT` (text order is time order) |
 //! | Migration files | `migrations/postgres/` | `migrations/sqlite/` |
 //! | "Does `schema_meta` exist?" | `information_schema.tables` | `sqlite_master` |
-//! | Write lock for migrations, bootstrap and access changes | `pg_advisory_xact_lock` | `BEGIN IMMEDIATE`: the lock is taken before the first read, even across processes |
+//! | Write lock for migrations, bootstrap, access changes, account deletion, manual transactions and account creation with an IBAN | `BEGIN ISOLATION LEVEL READ COMMITTED` then `pg_advisory_xact_lock` (READ COMMITTED so the reads after the lock are fresh, whatever the server default) | `BEGIN IMMEDIATE`: the lock is taken before the first read, even across processes |
 //! | Rows affected | `PgQueryResult` | `SqliteQueryResult` (no generic accessor in SQLx) |
 //! | Connection setup | pool of 10 | WAL, `busy_timeout=5000`, `foreign_keys=ON`, one writer plus read-only readers |
 //!
@@ -44,8 +44,9 @@ pub trait Dialect: Database {
     /// One row, column `n`: 1 when the `schema_meta` table exists, else 0.
     const SCHEMA_META_EXISTS: &'static str;
     /// Statement that opens a write transaction that must not interleave
-    /// with another process (migrations, bootstrap, access changes). `None`
-    /// for a plain `BEGIN`.
+    /// with another process (migrations, bootstrap, access changes, account
+    /// deletion, manual transactions, account creation with an IBAN).
+    /// `None` for a plain `BEGIN`.
     const BEGIN_EXCLUSIVE: Option<&'static str>;
     /// Statement run first in such a transaction. `None` when
     /// [`Self::BEGIN_EXCLUSIVE`] already takes the lock.
@@ -101,9 +102,14 @@ impl Dialect for Postgres {
     const MIGRATIONS: &'static [Migration] = PG_MIGRATIONS;
     const SCHEMA_META_EXISTS: &'static str = "SELECT COUNT(*) AS n FROM information_schema.tables \
          WHERE table_schema = current_schema() AND table_name = 'schema_meta'";
+    // READ COMMITTED whatever the server's `default_transaction_isolation`:
+    // each statement after the lock then reads what committed before it.
+    // Under REPEATABLE READ or SERIALIZABLE the snapshot would be taken by
+    // the lock statement itself, before it waits, so the checks after it
+    // would read stale data.
+    const BEGIN_EXCLUSIVE: Option<&'static str> = Some("BEGIN ISOLATION LEVEL READ COMMITTED");
     // Arbitrary constant key ("solde" in ASCII); transaction-scoped, so it
     // is released on commit or rollback.
-    const BEGIN_EXCLUSIVE: Option<&'static str> = None;
     const WRITE_LOCK: Option<&'static str> = Some("SELECT pg_advisory_xact_lock(495874460773)");
 
     type Id = Uuid;
