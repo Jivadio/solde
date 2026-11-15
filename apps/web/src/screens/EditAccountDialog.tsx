@@ -4,6 +4,7 @@
 // sets the balance of an account added without one. The type, currency
 // and IBAN never change. Only the fields that changed are sent.
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api, call, type Account } from '../api/client';
 import { errorMessage } from '../api/errors';
@@ -125,11 +126,17 @@ function EditAccountForm({
   const { t } = useTranslation();
   const locale = useFormatLocale();
   const digits = account.minor_digits;
+  // What the form started from: a refetch while the dialog is open must
+  // not make an untouched field look changed (and undo someone's edit).
+  const [initial] = useState(() => ({
+    name: account.name,
+    balance: account.balance_minor ?? null,
+  }));
 
   const form = useForm<Values>(
     {
-      name: account.name,
-      balance: editableAmount(account.balance_minor ?? null, digits, locale),
+      name: initial.name,
+      balance: editableAmount(initial.balance, digits, locale),
     },
     (v) => {
       const errors: Partial<Values> = {};
@@ -147,12 +154,12 @@ function EditAccountForm({
   const changes = (v: Values): Changes => {
     const result: Changes = {};
     const name = v.name.trim();
-    if (name !== account.name) result.name = name;
+    if (name !== initial.name) result.name = name;
     const parsed = v.balance.trim()
       ? parseAmount(v.balance, { locale, digits })
       : null;
     const balance = parsed?.ok ? parsed.minor : null;
-    if (balance !== (account.balance_minor ?? null)) {
+    if (balance !== initial.balance) {
       result.balance_minor = balance;
     }
     return result;

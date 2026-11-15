@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Flows closing Milestone 2: editing an account, setting a missing
 // balance, revoking an invitation, and the plain-HTTP cookie warning.
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { Account, Invitation } from './api/client';
@@ -117,6 +117,32 @@ describe('editing an account', () => {
     expect(requests.find((r) => r.method === 'PATCH')?.body).toEqual({
       balance_minor: null,
     });
+  });
+
+  it('never sends a field the person left alone, even after a refetch', async () => {
+    const { state, requests } = installFakeApi(household(JANE.user.id, 10_000));
+    const { queryClient } = renderApp(`/accounts/${ACCOUNT.id}`);
+    const user = await openMenuItem('Edit account');
+    const dialog = await screen.findByRole('dialog', { name: 'Edit account' });
+
+    // Someone else changes the balance while the dialog is open.
+    state.accounts[0]!.balance_minor = 20_000;
+    await act(() =>
+      queryClient.refetchQueries({ queryKey: ['accounts', ACCOUNT.id] }),
+    );
+    const name = within(dialog).getByLabelText('Account name');
+    await user.clear(name);
+    await user.type(name, 'Household account');
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Save the changes' }),
+    );
+
+    await waitFor(() =>
+      expect(requests.find((r) => r.method === 'PATCH')?.body).toEqual({
+        name: 'Household account',
+      }),
+    );
+    expect(state.accounts[0]!.balance_minor).toBe(20_000);
   });
 
   it('closes without a request when nothing changed', async () => {
@@ -291,6 +317,8 @@ describe('revoking an invitation', () => {
       contentType: 'application/json',
     });
     expect(screen.getByText('Accepted by John Doe')).toBeInTheDocument();
+    // The row and its menu button are gone: focus stays in the content.
+    await waitFor(() => expect(document.getElementById('main')).toHaveFocus());
   });
 
   it('explains, in the dialog, an invitation used in the meantime', async () => {

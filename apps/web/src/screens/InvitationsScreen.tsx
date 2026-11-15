@@ -3,7 +3,7 @@
 // once, in that dialog. A pending invitation can be revoked from its row
 // menu, after a confirmation.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api, call, type Invitation, type Role } from '../api/client';
 import { errorMessage } from '../api/errors';
@@ -185,6 +185,18 @@ export function InvitationsScreen() {
   const names = new Map((users.data ?? []).map((u) => [u.id, u.name]));
   const empty = invitations.data?.length === 0;
 
+  // The confirmation gives focus back to the row's menu button, which the
+  // refreshed list then removes: keep keyboard users in the content.
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!refocus.current) return;
+    const focused = document.activeElement;
+    if (!focused || focused === document.body || !focused.isConnected) {
+      refocus.current = false;
+      document.getElementById('main')?.focus();
+    }
+  }, [invitations.data]);
+
   const revoke = useMutation({
     mutationFn: (invitationId: string) =>
       call(
@@ -195,6 +207,7 @@ export function InvitationsScreen() {
     onSuccess: async () => {
       setRevoking(null);
       toast(t('invitations.revoked'));
+      refocus.current = true;
       await queryClient.invalidateQueries({
         queryKey: invitationsQuery.queryKey,
       });
