@@ -123,6 +123,7 @@ jobs:
             org.opencontainers.image.description=Self-hosted household finance server
             org.opencontainers.image.source=https://github.com/Jivadio/solde
             org.opencontainers.image.version=${{ needs.release-please.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.release-please.outputs.sha }}
             org.opencontainers.image.licenses=AGPL-3.0-or-later
 
       # No build cache on purpose: a release image is built from scratch, so
