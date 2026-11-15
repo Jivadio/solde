@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The household and its members: first admin, invitations, member list.
+//! The household and its members: first admin, invitations (create, list,
+//! revoke, accept), member list.
 
 use chrono::TimeDelta;
 use solde_core_domain::{Household, Role, User};
-use solde_storage::{Invitation, NewInvitation, NewMember, Store, StoreError, Timestamp};
+use solde_storage::{
+    Invitation, InvitationId, NewInvitation, NewMember, Store, StoreError, Timestamp,
+};
 
 use crate::error::{MAX_NAME_CHARS, clean_name};
 use crate::{SecretToken, ServiceError, Viewer, hash_token, normalize_email};
@@ -89,6 +92,36 @@ pub async fn list_invitations(
 ) -> Result<Vec<Invitation>, ServiceError> {
     viewer.require_admin()?;
     Ok(store.list_invitations(viewer.household_id()).await?)
+}
+
+/// Revokes a pending invitation of the viewer's household, so its token
+/// stops working. Admins only. [`ServiceError::NotFound`] for an unknown
+/// invitation (or one of another household);
+/// [`ServiceError::InvitationAccepted`] once it has been used, since the
+/// member it created stays.
+pub async fn revoke_invitation(
+    store: &dyn Store,
+    viewer: &Viewer,
+    invitation_id: InvitationId,
+) -> Result<(), ServiceError> {
+    viewer.require_admin()?;
+    if store
+        .revoke_invitation(viewer.household_id(), invitation_id)
+        .await?
+    {
+        return Ok(());
+    }
+    // Nothing deleted: say whether it was used or never there.
+    let accepted = store
+        .list_invitations(viewer.household_id())
+        .await?
+        .iter()
+        .any(|invitation| invitation.id == invitation_id && invitation.accepted_at.is_some());
+    if accepted {
+        Err(ServiceError::InvitationAccepted)
+    } else {
+        Err(ServiceError::NotFound)
+    }
 }
 
 /// Joins the household with an invitation token (no viewer: the invitee has

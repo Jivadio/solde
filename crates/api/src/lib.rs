@@ -99,10 +99,16 @@ pub fn router(store: Arc<dyn Store>, config: ApiConfig) -> Result<Router, InitEr
             get(household::invitations).post(household::invite),
         )
         .route("/invitations/accept", post(household::accept))
+        .route(
+            "/invitations/{invitation_id}",
+            axum::routing::delete(household::revoke),
+        )
         .route("/accounts", get(accounts::list).post(accounts::create))
         .route(
             "/accounts/{account_id}",
-            get(accounts::get).delete(accounts::delete),
+            get(accounts::get)
+                .patch(accounts::update)
+                .delete(accounts::delete),
         )
         .route("/accounts/{account_id}/access", get(accounts::access))
         .route(
@@ -172,9 +178,11 @@ async fn api_headers(mut response: Response) -> Response {
         routes::household::invitations,
         routes::household::invite,
         routes::household::accept,
+        routes::household::revoke,
         routes::accounts::list,
         routes::accounts::create,
         routes::accounts::get,
+        routes::accounts::update,
         routes::accounts::delete,
         routes::accounts::access,
         routes::accounts::grant,

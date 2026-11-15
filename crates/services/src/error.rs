@@ -27,6 +27,8 @@ pub enum ServiceError {
     DuplicateIban,
     /// The change would leave the account without any owner.
     LastOwner,
+    /// The invitation was already used, so it can no longer be revoked.
+    InvitationAccepted,
     /// The operating system's random source failed (no token generated).
     RandomUnavailable,
     /// The store failed.
@@ -72,6 +74,7 @@ impl fmt::Display for ServiceError {
                 f.write_str("you already have an account with this IBAN")
             }
             ServiceError::LastOwner => f.write_str("an account must keep at least one owner"),
+            ServiceError::InvitationAccepted => f.write_str("the invitation was already used"),
             ServiceError::RandomUnavailable => f.write_str("random source unavailable"),
             ServiceError::Storage(err) => write!(f, "storage error: {err}"),
         }

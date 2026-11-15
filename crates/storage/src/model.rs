@@ -129,6 +129,16 @@ pub struct NewAccount {
     pub balance_minor: Option<i64>,
 }
 
+/// Changes to an account's details. `None` leaves a field as it is.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountChanges {
+    /// New name, already cleaned by the caller.
+    pub name: Option<String>,
+    /// New opening balance in minor units of the account's currency:
+    /// `Some(None)` clears it (balance unknown).
+    pub balance_minor: Option<Option<i64>>,
+}
+
 /// A manual transaction to record. Its currency is the amount's currency.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewTransaction {

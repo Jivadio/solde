@@ -37,7 +37,11 @@ export interface paths {
         delete: operations["deleteAccount"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Renames an account or sets, changes or clears its opening balance; the
+         *     current balance follows. Owners only.
+         */
+        patch: operations["updateAccount"];
         trace?: never;
     };
     "/api/v1/accounts/{account_id}/access": {
@@ -169,6 +173,23 @@ export interface paths {
          */
         post: operations["acceptInvitation"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/invitations/{invitation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revokes a pending invitation: its token stops working. Admins only. */
+        delete: operations["revokeInvitation"];
         options?: never;
         head?: never;
         patch?: never;
@@ -458,6 +479,12 @@ export interface components {
         /** @description The signed-in member and their household. */
         MeResponse: {
             household: components["schemas"]["HouseholdDto"];
+            /**
+             * @description Whether the server runs with `SOLDE_INSECURE_COOKIES=1`: the session
+             *     cookie is then sent over plain HTTP too, so clients should warn.
+             *     Only signed-in callers learn this; `/meta` does not say.
+             */
+            insecure_cookies: boolean;
             user: components["schemas"]["UserDto"];
         };
         /** @description What a client needs before signing in. */
@@ -521,6 +548,23 @@ export interface components {
          * @enum {string}
          */
         TransactionStatusDto: "pending" | "booked";
+        /**
+         * @description Changes to a manual account. Omitted fields stay as they are; the IBAN,
+         *     currency and kind cannot change (unknown fields answer `invalid_body`).
+         */
+        UpdateAccountRequest: {
+            /**
+             * Format: int64
+             * @description New opening balance in minor units of the account's currency, within
+             *     ±(2^53 − 1); `null` clears it (balance unknown), omitted keeps it.
+             */
+            balance_minor?: number | null;
+            /**
+             * @description New name; omitted keeps it. An account always has a name, so `null`
+             *     answers `invalid_body`.
+             */
+            name?: string;
+        };
         /** @description A household member, as other members see them. */
         UserDto: {
             /** Format: uuid */
@@ -668,6 +712,59 @@ export interface operations {
             };
             /** @description Not found, or not visible to the caller */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    updateAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDto"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not found, or not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Invalid input (see `code`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1086,6 +1183,53 @@ export interface operations {
             };
             /** @description `rate_limited`; see `Retry-After` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revokeInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invitation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unknown invitation */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `invitation_accepted`: already used */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

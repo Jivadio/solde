@@ -575,6 +575,7 @@ A contextual message in the flow: upcoming direct debit, failed sync, goal reach
 - `tone`: `info`, `warning`, `negative` (announced with `role="alert"`), `positive`.
 - A short bold title + one sentence saying what to do. `action` for a link.
 - One notice per screen. No notice for a trivial confirmation (prefer a toast).
+- The one exception is the shell's own warning: when the server sends the session cookie over plain HTTP (`SOLDE_INSECURE_COOKIES=1`), a `warning` notice heads every screen, for every member, until the setting changes. It cannot be dismissed, it is not an alert, and it links to the self-hosting guide. Admins read which setting it is; members are told to ask their admin about HTTPS.
 
 ```ts
 interface NoticeProps {
@@ -665,7 +666,7 @@ While a screen loads, grey `surface-sunken` blocks the shape of the content repl
 
 A short confirmation after an action that closes its dialog ("Transaction added."): `surface-inverse`, `on-inverse`, `radius-md`, `shadow-pop`, announced politely (`role="status"`), gone after a few seconds. Never for errors: errors stay in the dialog, next to what failed.
 
-`IconName` type: `plus`, `arrow-up-right`, `arrow-down-left`, `arrow-right-left`, `chevron-right`, `chevron-down`, `check`, `alert`, `info`, `eye`, `eye-off`, `home`, `grid`, `chart`, `card`, `piggy`, `cart`, `building`, `briefcase`, `train`, `bolt`, `search`, `user`, `users`, `clock`, `close`, `more`, `logout`, `key`.
+`IconName` type: `plus`, `pencil`, `arrow-up-right`, `arrow-down-left`, `arrow-right-left`, `chevron-right`, `chevron-down`, `check`, `alert`, `info`, `eye`, `eye-off`, `home`, `grid`, `chart`, `card`, `piggy`, `cart`, `building`, `briefcase`, `train`, `bolt`, `search`, `user`, `users`, `clock`, `close`, `more`, `logout`, `key`.
 
 Utility: `formatAmount(value, { locale, signed?, decimals?, currency, digits })` takes `value` in integer minor units, divides it by 10^digits, where `digits` is the currency's minor-unit count **as the server reports it** (`minor_digits` on accounts and transactions, from ISO 4217: 2 for EUR and HUF, 0 for JPY, 3 for IQD), then formats with `Intl.NumberFormat(locale, { style: 'currency', currency })`, passing `minimumFractionDigits` and `maximumFractionDigits` explicitly. Never take the digits from `Intl`: browsers follow CLDR, which disagrees with ISO 4217 for a few currencies (HUF, IQD, LBP, IRR, ALL), and amounts would be 100× off. A value that is not a safe integer renders as `—` instead of throwing; the server never sends one (amounts are limited to ±(2^53 − 1)). `decimals` only changes how many fraction digits are *displayed* (it sets both `minimumFractionDigits` and `maximumFractionDigits`, e.g. `decimals: 0` for "Over by €22"); the conversion from minor units always uses the currency's own scale. The formatter also replaces the `-` sign with `−` (U+2212) and uses `signDisplay: 'exceptZero'` when `signed`.
 
@@ -701,7 +702,7 @@ What Solde shows today (M2: manual accounts, no bank sync, no budgets), at `/`, 
 
 On mobile the same column stacks under the top bar, with the tab bar at the bottom. With no account yet, the summary and the grid give way to one `EmptyState` that explains Solde reads accounts and never moves money.
 
-The account screen follows the same frame: `PageHeader` (back to Accounts, badges, "Add a transaction" primary, a `Menu` with sharing and details), an inverse balance strip (current balance as the hero, opening balance and this month's money in and out beside it), then the transactions `DataTable`.
+The account screen follows the same frame: `PageHeader` (back to Accounts, badges, "Add a transaction" primary, a `Menu` with "Edit account" and sharing for owners, then details), an inverse balance strip (current balance as the hero, opening balance and this month's money in and out beside it), then the transactions `DataTable`. When the balance is unknown, the strip gives way to a plain card that says so and why; owners get a secondary "Set the balance" button there, which opens the edit dialog reduced to the opening balance, and others read that an owner can set it. Editing opens a dialog with the name and the opening balance only: the type, currency and IBAN never change.
 
 ---
 

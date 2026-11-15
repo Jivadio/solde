@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // One account: its current balance, its transactions, and dialogs to add
-// a transaction and to read the account's details.
+// a transaction, to read the account's details and (owners) to edit it.
 import {
   keepPreviousData,
   useMutation,
@@ -37,6 +37,7 @@ import { currencySymbol } from '../lib/currencies';
 import { todayIso } from '../lib/dates';
 import { useFormatLocale } from '../lib/locale';
 import { formatAmount, parseAmount } from '../lib/money';
+import { EditAccountDialog } from './EditAccountDialog';
 import { TransactionsTable } from './TransactionsTable';
 import {
   ErrorState,
@@ -93,9 +94,12 @@ function monthTotals(
 function BalanceStrip({
   account,
   month,
+  onSetBalance,
 }: {
   account: Account;
   month: { in: number; out: number } | null;
+  /** Owners only: opens the dialog that sets the opening balance. */
+  onSetBalance?: () => void;
 }) {
   const { t } = useTranslation();
   const locale = useFormatLocale();
@@ -109,6 +113,17 @@ function BalanceStrip({
       <Card className="sd-balance-unknown">
         <h2 className="heading">{t('account.balanceUnknownTitle')}</h2>
         <p className="body sd-muted">{t('account.balanceUnknownBody')}</p>
+        {onSetBalance ? (
+          <div className="sd-balance-unknown__action">
+            <Button variant="secondary" onClick={onSetBalance}>
+              {t('account.setBalance')}
+            </Button>
+          </div>
+        ) : (
+          <p className="caption sd-muted">
+            {t('account.balanceUnknownAskOwner')}
+          </p>
+        )}
       </Card>
     );
   }
@@ -496,7 +511,9 @@ function AccountView({ account }: { account: Account }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [limit, setLimit] = useState(TRANSACTIONS_PAGE);
-  const [dialog, setDialog] = useState<'add' | 'details' | null>(null);
+  const [dialog, setDialog] = useState<
+    'add' | 'details' | 'edit' | 'balance' | null
+  >(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const transactions = useAccountTransactions(account.id, limit);
 
@@ -539,6 +556,11 @@ function AccountView({ account }: { account: Account }) {
                 ...(isOwner
                   ? [
                       {
+                        label: t('account.edit'),
+                        icon: 'pencil' as const,
+                        onSelect: () => setDialog('edit'),
+                      },
+                      {
                         label: t('account.manageSharing'),
                         icon: 'users' as const,
                         onSelect: () =>
@@ -559,7 +581,11 @@ function AccountView({ account }: { account: Account }) {
           </>
         }
       />
-      <BalanceStrip account={account} month={month} />
+      <BalanceStrip
+        account={account}
+        month={month}
+        onSetBalance={isOwner ? () => setDialog('balance') : undefined}
+      />
       <TransactionsCard
         account={account}
         transactions={transactions}
@@ -586,6 +612,14 @@ function AccountView({ account }: { account: Account }) {
         open={dialog === 'details'}
         onClose={() => setDialog(null)}
       />
+      {isOwner && (
+        <EditAccountDialog
+          account={account}
+          mode={dialog === 'balance' ? 'balance' : 'edit'}
+          open={dialog === 'edit' || dialog === 'balance'}
+          onClose={() => setDialog(null)}
+        />
+      )}
     </>
   );
 }

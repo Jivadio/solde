@@ -79,7 +79,7 @@ pub enum Permission {
     /// Recategorize, add notes and manual transactions, request a session
     /// refresh (no 2FA) on shared connections.
     Write,
-    /// Share the account, manage connections, delete.
+    /// Share the account, manage connections, edit its details, delete.
     Owner,
 }
 
@@ -100,6 +100,8 @@ pub enum Action {
     Share,
     /// Link, replace or remove a bank connection on this account.
     ManageConnection,
+    /// Rename the account or change its opening balance.
+    Edit,
     /// Delete the account.
     Delete,
 }
@@ -113,7 +115,9 @@ impl Action {
             | Action::AddNote
             | Action::AddManualTransaction
             | Action::RequestRefresh => Permission::Write,
-            Action::Share | Action::ManageConnection | Action::Delete => Permission::Owner,
+            Action::Share | Action::ManageConnection | Action::Edit | Action::Delete => {
+                Permission::Owner
+            }
         }
     }
 }
@@ -386,7 +390,7 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    const ACTIONS: [Action; 8] = [
+    const ACTIONS: [Action; 9] = [
         Action::View,
         Action::Recategorize,
         Action::AddNote,
@@ -394,6 +398,7 @@ mod tests {
         Action::RequestRefresh,
         Action::Share,
         Action::ManageConnection,
+        Action::Edit,
         Action::Delete,
     ];
 

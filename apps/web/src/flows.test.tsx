@@ -872,14 +872,18 @@ describe('dialogs and menus', () => {
     button.focus();
     await user.keyboard('{ArrowDown}');
     expect(button).toHaveAttribute('aria-expanded', 'true');
+    // Owners get three items: edit, sharing, details.
     const items = screen.getAllByRole('menuitem');
+    expect(items).toHaveLength(3);
     expect(items[0]).toHaveFocus();
     await user.keyboard('{ArrowDown}');
     expect(items[1]).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(items[0]).toHaveFocus();
     await user.keyboard('{End}');
-    expect(items[1]).toHaveFocus();
+    expect(items[2]).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(items[0]).toHaveFocus();
+    await user.keyboard('{ArrowUp}');
+    expect(items[2]).toHaveFocus();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(button).toHaveFocus();

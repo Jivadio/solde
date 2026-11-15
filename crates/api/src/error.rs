@@ -96,6 +96,11 @@ impl ApiError {
                     "last_owner",
                     "an account must keep at least one owner",
                 ),
+                ServiceError::InvitationAccepted => (
+                    S::CONFLICT,
+                    "invitation_accepted",
+                    "the invitation was already used",
+                ),
                 _ => (S::INTERNAL_SERVER_ERROR, "internal", "internal error"),
             },
             ApiError::Unauthorized => (

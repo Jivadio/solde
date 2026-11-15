@@ -10,15 +10,15 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use solde_core_domain::{AccountId, Currency, Date, Money, TransactionStatus, UserId};
 use solde_services::{
-    NewManualAccount, NewManualTransaction, create_account, create_transaction, delete_account,
-    get_account, list_account_access, list_accounts, list_transactions, revoke_access,
-    share_account,
+    AccountUpdate, NewManualAccount, NewManualTransaction, create_account, create_transaction,
+    delete_account, get_account, list_account_access, list_accounts, list_transactions,
+    revoke_access, share_account, update_account,
 };
 
 use crate::auth::{ApiJson, Auth};
 use crate::dto::{
     AccessDto, AccountDto, CreateAccountRequest, CreateTransactionRequest, GrantAccessRequest,
-    ListTransactionsQuery, TransactionDto,
+    ListTransactionsQuery, TransactionDto, UpdateAccountRequest,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::routes::parse_id;
@@ -100,6 +100,42 @@ pub(crate) async fn get(
 ) -> Result<Json<AccountDto>, ApiError> {
     let account_id: AccountId = parse_id(&account_id)?;
     let account = get_account(state.store(), &auth.viewer, account_id).await?;
+    Ok(Json(account.into()))
+}
+
+/// Renames an account or sets, changes or clears its opening balance; the
+/// current balance follows. Owners only.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/accounts/{account_id}",
+    operation_id = "updateAccount",
+    tag = "accounts",
+    params(("account_id" = String, Path, format = Uuid)),
+    request_body = UpdateAccountRequest,
+    responses(
+        (status = 200, body = AccountDto, description = "Updated"),
+        (status = 403, body = ErrorBody, description = "Not allowed"),
+        (status = 404, body = ErrorBody, description = "Not found, or not visible to the caller"),
+        (status = 422, body = ErrorBody, description = "Invalid input (see `code`)"),
+    )
+)]
+pub(crate) async fn update(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(account_id): Path<String>,
+    ApiJson(body): ApiJson<UpdateAccountRequest>,
+) -> Result<Json<AccountDto>, ApiError> {
+    let account_id: AccountId = parse_id(&account_id)?;
+    let account = update_account(
+        state.store(),
+        &auth.viewer,
+        account_id,
+        AccountUpdate {
+            name: body.name,
+            balance_minor: body.balance_minor,
+        },
+    )
+    .await?;
     Ok(Json(account.into()))
 }
 

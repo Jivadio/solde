@@ -168,7 +168,7 @@ SOLDE_BIND_ADDRESS=0.0.0.0
 SOLDE_INSECURE_COOKIES=1
 ```
 
-The server then logs a warning at every start. Anyone on the network who can watch the traffic can read the session cookie, so only do this on a network you trust, and never expose Solde to the internet this way. HTTPS through a reverse proxy is the better option whenever you can set one up.
+The server then logs a warning at every start, and the web app shows every signed-in member a warning on every screen. Anyone on the network who can watch the traffic can read the session cookie, so only do this on a network you trust, and never expose Solde to the internet this way. HTTPS through a reverse proxy is the better option whenever you can set one up.
 
 ## Behind a reverse proxy
 

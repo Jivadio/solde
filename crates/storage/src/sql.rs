@@ -26,8 +26,9 @@ use crate::codec::{
 };
 use crate::migrate::SCHEMA_VERSION;
 use crate::model::{
-    ApiToken, ApiTokenId, Invitation, NewAccount, NewApiToken, NewInvitation, NewMember,
-    NewSession, NewTransaction, NewUser, Session, Timestamp, UserCredentials,
+    AccountChanges, ApiToken, ApiTokenId, Invitation, InvitationId, NewAccount, NewApiToken,
+    NewInvitation, NewMember, NewSession, NewTransaction, NewUser, Session, Timestamp,
+    UserCredentials,
 };
 use crate::overrides::{Dialect, truncate};
 use crate::store::{Backend, Store};
@@ -732,6 +733,23 @@ where
         Ok(created)
     }
 
+    async fn revoke_invitation(
+        &self,
+        household_id: HouseholdId,
+        id: InvitationId,
+    ) -> Result<bool, StoreError> {
+        // Conditional delete: an invitation accepted concurrently stays.
+        let result = sqlx::query(
+            "DELETE FROM invitations \
+             WHERE id = $1 AND household_id = $2 AND accepted_at IS NULL",
+        )
+        .bind(Self::id(id.as_u128()))
+        .bind(Self::id(household_id.as_u128()))
+        .execute(&self.writer)
+        .await?;
+        Ok(DB::rows_affected(&result) > 0)
+    }
+
     async fn find_invitation(
         &self,
         token_hash: &str,
@@ -890,6 +908,39 @@ where
         .iter()
         .map(Self::decode_account)
         .collect()
+    }
+
+    async fn update_account(
+        &self,
+        actor: UserId,
+        id: AccountId,
+        changes: AccountChanges,
+    ) -> Result<Account, StoreError> {
+        let mut tx = self.begin_exclusive().await?;
+        Self::ensure_actor_allows(&mut tx, actor, id, Action::Edit).await?;
+        // One statement, scoped to the actor's household: an absent field
+        // keeps the stored value, so concurrent edits of different fields
+        // never undo each other.
+        let set_balance = i64::from(changes.balance_minor.is_some());
+        let row = sqlx::query(concat!(
+            "UPDATE accounts SET name = COALESCE($1, name), \
+             balance_minor = CASE WHEN $2 = 1 THEN $3 ELSE balance_minor END \
+             WHERE id = $4 \
+             AND household_id = (SELECT household_id FROM users WHERE id = $5) \
+             RETURNING ",
+            account_columns!()
+        ))
+        .bind(changes.name)
+        .bind(set_balance)
+        .bind(changes.balance_minor.flatten())
+        .bind(Self::id(id.as_u128()))
+        .bind(Self::id(actor.as_u128()))
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(StoreError::NotFound)?;
+        let account = Self::decode_account(&row)?;
+        tx.commit().await?;
+        Ok(account)
     }
 
     async fn delete_account(&self, actor: UserId, id: AccountId) -> Result<bool, StoreError> {
