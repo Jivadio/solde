@@ -38,7 +38,7 @@ Check that it's healthy with `docker compose ps` (the server shows as `healthy`)
 
 ### Health check
 
-The image has a Docker `HEALTHCHECK`: every 30 seconds (every 2 seconds while it starts), it runs `solde-server healthcheck`, which calls `GET /healthz` on the server's own port (from `SOLDE_LISTEN_ADDR`) and exits 0 when it answers 200, 1 otherwise. The image has no shell or curl, so the server binary does the probe itself. It reads no key and opens no database, so it never touches your secrets. `docker compose ps` and `docker inspect` show the result, and monitoring tools or an orchestrator can rely on it too.
+The image has a Docker `HEALTHCHECK`: every 30 seconds (every 2 seconds while it starts, with Docker Engine 25 or later; older engines probe every 30 seconds from the start), it runs `solde-server healthcheck`, which calls `GET /healthz` on the server's own port (from `SOLDE_LISTEN_ADDR`) and exits 0 when it answers 200, 1 otherwise. The image has no shell or curl, so the server binary does the probe itself. It reads no key and opens no database, so it never touches your secrets. `docker compose ps` and `docker inspect` show the result, and monitoring tools or an orchestrator can rely on it too.
 
 ### Settings
 
@@ -59,13 +59,28 @@ The full list of server settings is in the [README](../README.md#configuration).
 
 ### Choosing a version
 
-The compose files use the image `ghcr.io/jivadio/solde:${SOLDE_VERSION:-latest}`. Once releases are published, we recommend pinning one, so an upgrade only happens when you decide. Put this in the `.env` file next to the compose files:
+The compose files use the image `ghcr.io/jivadio/solde:${SOLDE_VERSION:-latest}`. Once releases are published, pin one: it is the normal way to run Solde, and an upgrade then only happens when you decide. Put this in the `.env` file next to the compose files:
 
 ```sh
 SOLDE_VERSION=0.1.0
 ```
 
-Compose uses the image of that version if it is already on your machine, pulls it otherwise, and falls back to building it from your checkout when it cannot be pulled. `docker compose pull server` fetches it explicitly. If you build from source instead (`--build`), the image you build gets that tag, so check out the matching release tag (`git checkout v0.1.0`) first.
+Compose uses the image of that version if it is already on your machine and pulls it otherwise. Once the image is published, **Compose pulls it rather than building your checkout**, so local changes to the source are not used. It only builds from your checkout when the image cannot be pulled (before the first release, for example). `docker compose pull server` fetches the image explicitly.
+
+To build from source instead (on an ARM machine, or to run changes of your own):
+
+- once: `docker compose build server`, then `docker compose up -d` (it uses the image you just built);
+- every time: add `pull_policy: build` to the server. With the PostgreSQL variant, a `compose.override.yaml` next to `compose.yaml` is picked up automatically:
+
+  ```yaml
+  services:
+    server:
+      pull_policy: build
+  ```
+
+  With SQLite, pass it explicitly: `docker compose -f compose.sqlite.yaml -f compose.override.yaml up -d`.
+
+The image you build gets the `SOLDE_VERSION` tag, so check out the matching release tag (`git checkout v0.1.0`) first, or unset `SOLDE_VERSION` to keep `latest`.
 
 ### PostgreSQL on another machine
 

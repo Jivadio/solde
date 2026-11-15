@@ -13,8 +13,9 @@ on:
 permissions:
   contents: read
 
-# One release run at a time, never cancelled halfway, so `latest` always
-# ends up on the newest release.
+# One release run at a time, never cancelled halfway. GitHub keeps only one
+# pending run per group: a newer push replaces a queued run, which is then
+# dropped (the image job builds the tagged commit, not the triggering one).
 concurrency:
   group: release
   cancel-in-progress: false
