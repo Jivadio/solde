@@ -3,6 +3,9 @@
 //!
 //! - `solde-server`: serve the API and the web app (configuration from the
 //!   environment).
+//! - `solde-server healthcheck`: exit 0 when the local server answers
+//!   `GET /healthz` with 200, 1 otherwise (container healthcheck). It reads
+//!   `SOLDE_LISTEN_ADDR` only: no key, no database.
 //! - `solde-server admin export-key`: print the master key to stdout, for
 //!   a backup. The key is never printed or logged otherwise.
 
@@ -14,9 +17,10 @@ use anyhow::Context as _;
 use solde_server::Config;
 
 const USAGE: &str = "\
-usage: solde-server [admin export-key]
+usage: solde-server [healthcheck | admin export-key]
 
   (no command)        serve the API and web app; configured by SOLDE_* environment variables
+  healthcheck         exit 0 if the server on SOLDE_LISTEN_ADDR answers GET /healthz, 1 otherwise
   admin export-key    print the master key (SOLDE_MASTER_KEY_FILE) to stdout";
 
 fn main() -> ExitCode {
@@ -24,6 +28,7 @@ fn main() -> ExitCode {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match args.as_slice() {
         [] => serve(),
+        ["healthcheck"] => healthcheck(),
         ["admin", "export-key"] => export_key(),
         ["help" | "--help" | "-h"] => {
             println!("{USAGE}");
@@ -41,6 +46,17 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Probes the local server, for the container healthcheck. Loads no
+/// secret: only `SOLDE_LISTEN_ADDR` is read.
+fn healthcheck() -> anyhow::Result<()> {
+    let listen = solde_server::listen_addr_from_vars(|name| std::env::var(name).ok())?;
+    let addr = solde_server::healthcheck_addr(listen);
+    // 3 s for the whole probe, under the image's HEALTHCHECK --timeout=5s.
+    solde_server::healthcheck(addr, std::time::Duration::from_secs(3))?;
+    println!("ok");
+    Ok(())
 }
 
 /// Prints the key in its file form. Only when explicitly asked for.

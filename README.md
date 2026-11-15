@@ -61,7 +61,7 @@ Bank connector crates may declare only `connector-sdk` and the crates listed in 
 
 ## Installation
 
-- **Server**: `docker compose up` (PostgreSQL) or `docker compose -f compose.sqlite.yaml up` (SQLite), then open <http://localhost:8080> and enter the one-time setup code the server prints in its log (`docker compose logs server | grep "setup code"`). A one-shot init container generates the master key into its own volume, apart from the data; you can also provide your own. The guide, with backups, home-network and reverse-proxy setups and upgrades, is [docs/self-hosting.md](docs/self-hosting.md).
+- **Server**: `docker compose up` (PostgreSQL) or `docker compose -f compose.sqlite.yaml up` (SQLite) from a checkout of this repository. Compose uses the server image `ghcr.io/jivadio/solde`, which each release from 0.1.0 on publishes for linux/amd64. Pin a version (`SOLDE_VERSION=0.1.0` in `.env`), which is the recommended setup. Once the image is published, Compose pulls it rather than building your checkout. Until the first release, it builds the image from source. To build from source on purpose (on ARM machines, for example), run `docker compose build server` or use `pull_policy: build` ([how](docs/self-hosting.md#choosing-a-version)). Then open <http://localhost:8080> and enter the one-time setup code the server prints in its log (`docker compose logs server | grep "setup code"`). A one-shot init container generates the master key into its own volume, apart from the data; you can also provide your own. The guide, with backups, home-network and reverse-proxy setups and upgrades, is [docs/self-hosting.md](docs/self-hosting.md).
 - **Desktop** (planned): installers for macOS, Windows and Linux.
 
 It is not ready for everyday use yet. The web app covers the first steps: setting up your household, signing in, an overview of where your accounts stand, inviting members, manual accounts (with their current balance) and transactions, sharing and API tokens. Bank connections are still to come, and the interface is in English until the translations land.
@@ -72,9 +72,9 @@ The server reads its settings from environment variables (the compose files set 
 
 | Variable | Default | What it does |
 |----------|---------|--------------|
-| `SOLDE_DATABASE_URL` | *(required)* | `postgres://user:password@host:5432/solde` or `sqlite:///path/to/solde.db`. Migrations run at startup; the server refuses a database created by a newer Solde. |
+| `SOLDE_DATABASE_URL` | *(required)* | `postgres://user:password@host:5432/solde` or `sqlite:///path/to/solde.db`. For PostgreSQL on another machine add `?sslmode=verify-full` (and `sslrootcert=` for your own CA), see [docs/self-hosting.md](docs/self-hosting.md#postgresql-on-another-machine). Migrations run at startup; the server refuses a database created by a newer Solde. |
 | `SOLDE_MASTER_KEY_FILE` | *(required)* | File holding the master key: 32 random bytes in base64 (`head -c 32 /dev/urandom \| base64 > master.key`). Without it the server refuses to start. With Docker Compose, the `keygen` service creates it. |
-| `SOLDE_LISTEN_ADDR` | `0.0.0.0:8080` | Address and port to listen on. |
+| `SOLDE_LISTEN_ADDR` | `0.0.0.0:8080` | Address and port to listen on. `solde-server healthcheck` (the image's Docker `HEALTHCHECK`) probes `/healthz` on this port. |
 | `SOLDE_WEB_DIR` | *(unset)* | Directory of the built web app (`apps/web/dist`), read into memory at startup. The Docker image sets it. Unset, `/` shows a short placeholder page. |
 | `SOLDE_INSECURE_COOKIES` | `0` | `1` drops the `Secure` flag (and the `__Host-` prefix) from the session cookie, for a plain-HTTP home network. The server warns at startup; never use it on the internet. Most browsers accept secure cookies on `http://localhost` anyway. |
 | `SOLDE_TRUSTED_PROXIES` | *(empty)* | Comma-separated IPs or CIDR ranges of your reverse proxies. Only requests coming from them may set the client address through `X-Forwarded-For` (used by the login, setup and invitation rate limit). |

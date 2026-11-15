@@ -16,7 +16,7 @@ services:
   # --rm server admin export-key` prints it): without it, saved bank
   # credentials cannot be decrypted.
   keygen:
-    image: alpine:3.22
+    image: alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
     restart: "no"
     network_mode: none
     read_only: true
@@ -73,7 +73,8 @@ services:
     # and SOLDE_INSECURE_COOKIES first).
     ports:
       - "${SOLDE_BIND_ADDRESS:-127.0.0.1}:${SOLDE_PORT:-8080}:8080"
-    # No container healthcheck yet: the distroless image has no shell or curl.
+    # The image's HEALTHCHECK runs `solde-server healthcheck` (GET /healthz);
+    # `docker compose ps` shows the server as healthy once it answers.
 
   postgres:
     image: postgres:16-alpine
