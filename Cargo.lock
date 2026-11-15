@@ -1802,6 +1802,8 @@ name = "solde-secrets"
 version = "0.0.0"
 dependencies = [
  "base64 0.23.1",
+ "ring",
+ "serde",
  "zeroize",
 ]
 
@@ -1869,7 +1871,10 @@ dependencies = [
 name = "solde-sync-facade"
 version = "0.0.0"
 dependencies = [
- "solde-services",
+ "serde",
+ "serde_json",
+ "solde-core-domain",
+ "zeroize",
 ]
 
 [[package]]

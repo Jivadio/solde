@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Secrets boundary. Today: the [`MasterKey`], loaded and checked at
-//! startup. Planned: `Vault` (seal/unseal of bank credentials) and the OS
-//! keyring (desktop feature).
+//! Secrets boundary: the [`MasterKey`], loaded and checked at startup, and
+//! the [`Vault`], which seals bank credentials with AES-256-GCM under that
+//! key.
 //!
 //! Only `solde-sync` may depend on this crate. Application binaries reach it
 //! only through `solde-sync`.
@@ -13,6 +13,10 @@ use std::path::Path;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use zeroize::Zeroizing;
+
+mod vault;
+
+pub use vault::{NONCE_LEN, Sealed, VAULT_AAD_DOMAIN, Vault, VaultError};
 
 /// Key length in bytes (256 bits).
 pub const MASTER_KEY_LEN: usize = 32;
@@ -68,6 +72,12 @@ impl MasterKey {
     /// explicit `admin export-key` command only. Wiped on drop.
     pub fn export_base64(&self) -> Zeroizing<String> {
         Zeroizing::new(STANDARD.encode(self.0.as_slice()))
+    }
+
+    /// Raw key bytes for the in-crate [`Vault`](crate::Vault). Stays inside
+    /// `solde-secrets`: the only legal holder beside the key itself.
+    pub(crate) fn as_bytes(&self) -> &[u8; MASTER_KEY_LEN] {
+        &self.0
     }
 }
 

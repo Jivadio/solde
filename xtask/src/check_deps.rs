@@ -17,6 +17,15 @@
 //! 4. bank connector crates pass the guardrails of [`crate::connector_lint`]
 //!    (no build script, no lint opt-outs, no `std::process`/`std::env`...).
 //!
+//! 5. the `solde-sync-facade` features each dependent enables stay within
+//!    [`FACADE_FEATURE_POLICY`] (parsed from their `Cargo.toml` manifests,
+//!    including `[target.<cfg>.{dependencies,dev-dependencies,
+//!    build-dependencies}]` tables, since feature unification hides the
+//!    per-crate choice from `cargo metadata`, and the `[features]` table:
+//!    a `solde-sync-facade/intake` reference there, even behind a local
+//!    alias with simple recursive expansion, counts as enabling it).
+//!    In particular `solde-mcp` stays trigger-only.
+//!
 //! The closure of a crate includes its own dev-dependencies, then follows only
 //! normal and build dependencies (dev-dependencies of dependencies are never
 //! compiled into it).
@@ -248,6 +257,196 @@ pub fn check(graph: &Graph, connector_allowed_external: &BTreeSet<String>) -> Ve
     violations
 }
 
+/// `solde-sync-facade` features each dependent crate may enable: the
+/// dependent package name, its manifest directory, and its allowed features.
+///
+/// `solde-mcp` is trigger-only by policy: the MCP server may start a sync
+/// and read its status, but must never see credentials or challenges. `api`
+/// and `sync` may additionally enable `intake` (wired in M3b).
+const FACADE_FEATURE_POLICY: &[(&str, &str, &[&str])] = &[
+    ("solde-api", "crates/api", &["trigger", "intake"]),
+    ("solde-mcp", "crates/mcp", &["trigger"]),
+    ("solde-sync", "crates/sync", &["trigger", "intake"]),
+];
+
+/// Features one manifest enables on `solde-sync-facade`, across normal, dev
+/// and build dependencies (dev features unify into tests too), including
+/// `[target.<cfg>.{dependencies,dev-dependencies,build-dependencies}]`
+/// tables: a target-gated dependency still unifies into the build on that
+/// platform. The `[features]` table counts too: any
+/// `solde-sync-facade/<feature>` reference (under the dependency's local
+/// name when renamed) enables that feature when the alias is, and local
+/// aliases expand recursively, since `--all-features` or a unified server
+/// build could turn the alias on.
+fn facade_features_in(manifest: &toml::Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let dep_tables = ["dependencies", "dev-dependencies", "build-dependencies"];
+    for table in dep_tables {
+        collect_facade_features(manifest.get(table).and_then(|v| v.as_table()), &mut out);
+    }
+    if let Some(targets) = manifest.get("target").and_then(|v| v.as_table()) {
+        for (_, target) in targets {
+            let Some(target) = target.as_table() else {
+                continue;
+            };
+            for table in dep_tables {
+                collect_facade_features(target.get(table).and_then(|v| v.as_table()), &mut out);
+            }
+        }
+    }
+    out.extend(facade_features_in_feature_table(
+        manifest,
+        &facade_dep_names(manifest),
+    ));
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Appends the `solde-sync-facade` features declared in one dependency
+/// table (or nothing when the table is absent).
+fn collect_facade_features(deps: Option<&toml::Table>, out: &mut Vec<String>) {
+    let Some(deps) = deps else {
+        return;
+    };
+    for (name, spec) in deps {
+        let is_facade = name == "solde-sync-facade"
+            || spec.get("package").and_then(|p| p.as_str()) == Some("solde-sync-facade");
+        if !is_facade {
+            continue;
+        }
+        if let Some(features) = spec.get("features").and_then(|f| f.as_array()) {
+            out.extend(
+                features
+                    .iter()
+                    .filter_map(|f| f.as_str().map(str::to_owned)),
+            );
+        }
+    }
+}
+
+/// Local dependency names that refer to `solde-sync-facade` (the crate name
+/// itself, plus any renamed key whose `package` is `solde-sync-facade`),
+/// across normal, dev, build and target tables. `[features]` references use
+/// the local name, so aliases must match against this set.
+fn facade_dep_names(manifest: &toml::Value) -> BTreeSet<String> {
+    let mut names = BTreeSet::from(["solde-sync-facade".to_owned()]);
+    let dep_tables = ["dependencies", "dev-dependencies", "build-dependencies"];
+    let mut tables: Vec<&toml::Table> = Vec::new();
+    for table in dep_tables {
+        if let Some(t) = manifest.get(table).and_then(|v| v.as_table()) {
+            tables.push(t);
+        }
+    }
+    if let Some(targets) = manifest.get("target").and_then(|v| v.as_table()) {
+        for (_, target) in targets {
+            let Some(target) = target.as_table() else {
+                continue;
+            };
+            for table in dep_tables {
+                if let Some(t) = target.get(table).and_then(|v| v.as_table()) {
+                    tables.push(t);
+                }
+            }
+        }
+    }
+    for deps in tables {
+        for (name, spec) in deps {
+            let is_facade = name == "solde-sync-facade"
+                || spec.get("package").and_then(|p| p.as_str()) == Some("solde-sync-facade");
+            if is_facade {
+                names.insert(name.clone());
+            }
+        }
+    }
+    names
+}
+
+/// `solde-sync-facade` features referenced from the manifest's `[features]`
+/// table, following local aliases recursively. Any feature could be turned
+/// on (`--all-features`, unified server build), so every alias counts.
+fn facade_features_in_feature_table(
+    manifest: &toml::Value,
+    facade_names: &BTreeSet<String>,
+) -> Vec<String> {
+    let Some(table) = manifest.get("features").and_then(|v| v.as_table()) else {
+        return Vec::new();
+    };
+    let mut aliases: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (name, entries) in table {
+        let Some(entries) = entries.as_array() else {
+            continue;
+        };
+        aliases.insert(
+            name.clone(),
+            entries
+                .iter()
+                .filter_map(|e| e.as_str().map(str::to_owned))
+                .collect(),
+        );
+    }
+    let mut out = Vec::new();
+    for name in aliases.keys().cloned().collect::<Vec<_>>() {
+        let mut visited = BTreeSet::new();
+        collect_feature_table_refs(&name, &aliases, facade_names, &mut visited, &mut out);
+    }
+    out
+}
+
+/// Depth-first walk of one `[features]` alias: records every
+/// `<facade-dep>/<feature>` reference, recursing into local alias names.
+fn collect_feature_table_refs(
+    name: &str,
+    aliases: &BTreeMap<String, Vec<String>>,
+    facade_names: &BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+    out: &mut Vec<String>,
+) {
+    if !visited.insert(name.to_owned()) {
+        return;
+    }
+    let Some(entries) = aliases.get(name) else {
+        return;
+    };
+    for entry in entries.clone() {
+        if entry.starts_with("dep:") {
+            continue;
+        }
+        if let Some((left, right)) = entry.split_once('/') {
+            let dep = left.strip_suffix('?').unwrap_or(left);
+            let feature = right.strip_suffix('?').unwrap_or(right);
+            if facade_names.contains(dep) {
+                out.push(feature.to_owned());
+            }
+            continue;
+        }
+        let local = entry.strip_suffix('?').unwrap_or(&entry);
+        collect_feature_table_refs(local, aliases, facade_names, visited, out);
+    }
+}
+
+/// Checks rule 5: the `solde-sync-facade` features each dependent enables
+/// stay within [`FACADE_FEATURE_POLICY`].
+pub fn check_facade_feature_gates(root: &Path) -> anyhow::Result<Vec<String>> {
+    let mut violations = Vec::new();
+    for (package, dir, allowed) in FACADE_FEATURE_POLICY {
+        let path = root.join(dir).join("Cargo.toml");
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("cannot read {}", path.display()))?;
+        let manifest: toml::Value =
+            toml::from_str(&text).with_context(|| format!("invalid {}", path.display()))?;
+        for feature in facade_features_in(&manifest) {
+            if !allowed.contains(&feature.as_str()) {
+                violations.push(format!(
+                    "{package}: enables sync-facade feature \"{feature}\" (allowed: [{}]; mcp must stay trigger-only)",
+                    allowed.join(", ")
+                ));
+            }
+        }
+    }
+    Ok(violations)
+}
+
 /// Builds the graph of the current workspace from `cargo metadata`.
 pub fn workspace_graph() -> anyhow::Result<Graph> {
     graph_for(None)
@@ -329,6 +528,7 @@ pub fn run() -> anyhow::Result<()> {
     let graph = workspace_graph()?;
     let allowed = load_allowed_deps(workspace_root())?;
     let mut violations = check(&graph, &allowed);
+    violations.extend(check_facade_feature_gates(workspace_root())?);
     violations.extend(crate::connector_lint::check_workspace(workspace_root())?);
     if violations.is_empty() {
         println!(
@@ -558,6 +758,223 @@ mod tests {
         let v = check(&g, &BTreeSet::new());
         assert!(
             v.iter().any(|m| m.starts_with("solde-new: not declared")),
+            "{v:?}"
+        );
+    }
+
+    /// Writes a throwaway workspace root with the given
+    /// `solde-sync-facade` features per dependent crate. `dirs` are manifest
+    /// directories relative to the root (mirroring the `crates/<name>`
+    /// layout of [`FACADE_FEATURE_POLICY`]).
+    fn facade_workspace(features: &[(&str, &str)]) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let root = std::env::temp_dir().join(format!(
+            "solde-facade-gates-{}-{n}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        for (dir, feature_list) in features {
+            let manifest = format!(
+                "[package]\nname = \"solde-facade-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+                 [dependencies]\nsolde-sync-facade = {{ path = \"../sync-facade\", features = [{feature_list}] }}\n"
+            );
+            std::fs::create_dir_all(root.join(dir).join("src")).unwrap();
+            std::fs::write(root.join(dir).join("Cargo.toml"), manifest).unwrap();
+            std::fs::write(root.join(dir).join("src/lib.rs"), "").unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn facade_trigger_only_policy_passes() {
+        let root = facade_workspace(&[
+            ("crates/api", "\"trigger\""),
+            ("crates/mcp", "\"trigger\""),
+            ("crates/sync", "\"trigger\", \"intake\""),
+        ]);
+        let v = check_facade_feature_gates(&root).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(v, Vec::<String>::new());
+    }
+
+    #[test]
+    fn facade_intake_on_mcp_fails() {
+        let root = facade_workspace(&[
+            ("crates/api", "\"trigger\""),
+            ("crates/mcp", "\"trigger\", \"intake\""),
+            ("crates/sync", "\"trigger\""),
+        ]);
+        let v = check_facade_feature_gates(&root).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(
+            v.iter().any(|m| m
+                == "solde-mcp: enables sync-facade feature \"intake\" (allowed: [trigger]; mcp must stay trigger-only)"),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn facade_unknown_feature_fails_everywhere() {
+        let root = facade_workspace(&[
+            ("crates/api", "\"trigger\""),
+            ("crates/mcp", "\"trigger\""),
+            ("crates/sync", "\"trigger\", \"exfiltrate\""),
+        ]);
+        let v = check_facade_feature_gates(&root).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(
+            v.iter()
+                .any(|m| m.starts_with("solde-sync: enables sync-facade feature \"exfiltrate\"")),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn facade_target_tables_are_checked() {
+        let manifest: toml::Value = toml::from_str(
+            "[package]\nname = \"solde-facade-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+             [target.'cfg(unix)'.dependencies]\n\
+             solde-sync-facade = { path = \"../sync-facade\", features = [\"intake\"] }\n",
+        )
+        .unwrap();
+        assert_eq!(facade_features_in(&manifest), vec!["intake".to_owned()]);
+
+        // A target-gated dev table counts too, as does a renamed package.
+        let manifest: toml::Value = toml::from_str(
+            "[package]\nname = \"solde-facade-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+             [target.'cfg(windows)'.dev-dependencies]\n\
+             facade = { package = \"solde-sync-facade\", path = \"../sync-facade\", features = [\"trigger\"] }\n",
+        )
+        .unwrap();
+        assert_eq!(facade_features_in(&manifest), vec!["trigger".to_owned()]);
+
+        // Top-level and target tables merge (sorted, deduped).
+        let manifest: toml::Value = toml::from_str(
+            "[package]\nname = \"solde-facade-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\n\
+             solde-sync-facade = { path = \"../sync-facade\", features = [\"trigger\"] }\n\n\
+             [target.'cfg(unix)'.dependencies]\n\
+             solde-sync-facade = { path = \"../sync-facade\", features = [\"trigger\", \"intake\"] }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            facade_features_in(&manifest),
+            vec!["intake".to_owned(), "trigger".to_owned()]
+        );
+    }
+
+    #[test]
+    fn facade_target_gated_intake_on_mcp_fails() {
+        let root = facade_workspace(&[
+            ("crates/api", "\"trigger\""),
+            ("crates/mcp", "\"trigger\""),
+            ("crates/sync", "\"trigger\""),
+        ]);
+        let mcp = root.join("crates/mcp/Cargo.toml");
+        let mut text = std::fs::read_to_string(&mcp).unwrap();
+        text.push_str(
+            "\n[target.'cfg(unix)'.dependencies]\n\
+             solde-sync-facade = { path = \"../sync-facade\", features = [\"intake\"] }\n",
+        );
+        std::fs::write(&mcp, text).unwrap();
+        let v = check_facade_feature_gates(&root).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(
+            v.iter().any(|m| m
+                == "solde-mcp: enables sync-facade feature \"intake\" (allowed: [trigger]; mcp must stay trigger-only)"),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn facade_features_table_direct_ref_is_checked() {
+        let manifest: toml::Value = toml::from_str(
+            "[package]\nname = \"solde-facade-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\n\
+             solde-sync-facade = { path = \"../sync-facade\" }\n\n\
+             [features]\n\
+             interactive = [\"solde-sync-facade/intake\"]\n",
+        )
+        .unwrap();
+        assert_eq!(facade_features_in(&manifest), vec!["intake".to_owned()]);
+
+        // Renamed dependency: the `[features]` reference uses the local name.
+        let manifest: toml::Value = toml::from_str(
+            "[package]\nname = \"solde-facade-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\n\
+             facade = { package = \"solde-sync-facade\", path = \"../sync-facade\" }\n\n\
+             [features]\n\
+             interactive = [\"facade/intake\"]\n",
+        )
+        .unwrap();
+        assert_eq!(facade_features_in(&manifest), vec!["intake".to_owned()]);
+
+        // Unrelated features and `dep:` entries do not count.
+        let manifest: toml::Value = toml::from_str(
+            "[package]\nname = \"solde-facade-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\n\
+             solde-sync-facade = { path = \"../sync-facade\", optional = true }\n\n\
+             [features]\n\
+             default = []\n\
+             full = [\"dep:solde-sync-facade\", \"other\"]\n",
+        )
+        .unwrap();
+        assert_eq!(facade_features_in(&manifest), Vec::<String>::new());
+    }
+
+    #[test]
+    fn facade_features_table_alias_expands_recursively() {
+        let manifest: toml::Value = toml::from_str(
+            "[package]\nname = \"solde-facade-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\n\
+             solde-sync-facade = { path = \"../sync-facade\" }\n\n\
+             [features]\n\
+             mcp = [\"wire\"]\n\
+             wire = [\"inner\"]\n\
+             inner = [\"solde-sync-facade/intake\"]\n",
+        )
+        .unwrap();
+        assert_eq!(facade_features_in(&manifest), vec!["intake".to_owned()]);
+
+        // Cycles terminate without hanging.
+        let manifest: toml::Value = toml::from_str(
+            "[package]\nname = \"solde-facade-test\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\n\
+             solde-sync-facade = { path = \"../sync-facade\" }\n\n\
+             [features]\n\
+             a = [\"b\"]\n\
+             b = [\"a\", \"solde-sync-facade/trigger\"]\n",
+        )
+        .unwrap();
+        assert_eq!(facade_features_in(&manifest), vec!["trigger".to_owned()]);
+    }
+
+    #[test]
+    fn facade_alias_forwarding_intake_on_mcp_fails() {
+        let root = facade_workspace(&[
+            ("crates/api", "\"trigger\""),
+            ("crates/mcp", "\"trigger\""),
+            ("crates/sync", "\"trigger\""),
+        ]);
+        let mcp = root.join("crates/mcp/Cargo.toml");
+        let mut text = std::fs::read_to_string(&mcp).unwrap();
+        text.push_str(
+            "\n[features]\n\
+             mcp = [\"wire\"]\n\
+             wire = [\"solde-sync-facade/intake\"]\n",
+        );
+        std::fs::write(&mcp, text).unwrap();
+        let v = check_facade_feature_gates(&root).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(
+            v.iter().any(|m| m
+                == "solde-mcp: enables sync-facade feature \"intake\" (allowed: [trigger]; mcp must stay trigger-only)"),
             "{v:?}"
         );
     }

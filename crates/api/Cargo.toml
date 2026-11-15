@@ -17,7 +17,7 @@ ipnet.workspace = true
 serde.workspace = true
 solde-core-domain = { path = "../core-domain" }
 solde-services = { path = "../services" }
-solde-sync-facade = { path = "../sync-facade" }
+solde-sync-facade = { path = "../sync-facade", features = ["trigger", "intake"] }
 # Password hashing runs on the blocking pool, bounded by a semaphore.
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true

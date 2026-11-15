@@ -9,7 +9,9 @@ publish = false
 
 [dependencies]
 solde-services = { path = "../services" }
-solde-sync-facade = { path = "../sync-facade" }
+# Trigger-only: the MCP server may start a sync and read its status, but it
+# must never see credentials or challenges (enforced by check-deps).
+solde-sync-facade = { path = "../sync-facade", features = ["trigger"] }
 
 [lints]
 workspace = true
