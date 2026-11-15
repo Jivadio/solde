@@ -6,7 +6,7 @@ A word on where things stand: Solde is early. The server, the web app, sign-in, 
 
 ## Quickstart
 
-You need Docker with the Compose plugin, and a few GB of free disk space for the first build.
+You need Docker with the Compose plugin, and a few GB of free disk space if Compose builds the image from source.
 
 ```sh
 git clone https://github.com/Jivadio/solde.git
@@ -16,7 +16,7 @@ docker compose up -d                         # PostgreSQL
 docker compose -f compose.sqlite.yaml up -d  # SQLite, one container fewer
 ```
 
-The first start builds the image from source, which takes a few minutes. Then open <http://localhost:8080>: Solde asks you to name your household and create the first admin account. From there you can invite the other members of your household.
+On the first start, Compose looks for the server image `ghcr.io/jivadio/solde`. Each release from 0.1.0 on publishes it there, for linux/amd64 only for now (multi-arch images will come later). Until the first release is out, or when the image cannot be pulled, Compose builds it from source instead, which takes a few minutes. On an ARM machine (a Raspberry Pi, a Mac with Apple silicon...), build it from source with `docker compose up -d --build`. See [Choosing a version](#choosing-a-version) to pin one. Then open <http://localhost:8080>: Solde asks you to name your household and create the first admin account. From there you can invite the other members of your household.
 
 Solde also asks for a **setup code**. Until the first admin exists, the server prints a one-time code in its log, so only someone who can read that log (you) can claim the new instance, even if a stranger reaches it first:
 
@@ -34,7 +34,11 @@ What just happened:
 2. `postgres` (Postgres variant only) started with its data in the `solde-pgdata` volume.
 3. `server` loaded the key, applied the database migrations, and started serving the web app and the API.
 
-Check that it's healthy with `curl http://localhost:8080/healthz`, and follow the logs with `docker compose logs -f server`.
+Check that it's healthy with `docker compose ps` (the server shows as `healthy`) or `curl http://localhost:8080/healthz`, and follow the logs with `docker compose logs -f server`.
+
+### Health check
+
+The image has a Docker `HEALTHCHECK`: every 30 seconds (every 2 seconds while it starts), it runs `solde-server healthcheck`, which calls `GET /healthz` on the server's own port (from `SOLDE_LISTEN_ADDR`) and exits 0 when it answers 200, 1 otherwise. The image has no shell or curl, so the server binary does the probe itself. It reads no key and opens no database, so it never touches your secrets. `docker compose ps` and `docker inspect` show the result, and monitoring tools or an orchestrator can rely on it too.
 
 ### Settings
 
@@ -48,9 +52,30 @@ Compose reads these from your shell or from a `.env` file next to the compose fi
 | `SOLDE_INSECURE_COOKIES` | `0` | See [On a home network](#on-a-home-network-without-https). |
 | `SOLDE_TRUSTED_PROXIES` | *(empty)* | See [Behind a reverse proxy](#behind-a-reverse-proxy). |
 | `SOLDE_KEYS_SOURCE` | `solde-keys` volume | A directory holding your own `master.key`; see [Bringing your own key](#bringing-your-own-key). |
+| `SOLDE_VERSION` | `latest` | Tag of the server image `ghcr.io/jivadio/solde`; see [Choosing a version](#choosing-a-version). |
 | `RUST_LOG` | `info` | Log level of the server. |
 
 The full list of server settings is in the [README](../README.md#configuration).
+
+### Choosing a version
+
+The compose files use the image `ghcr.io/jivadio/solde:${SOLDE_VERSION:-latest}`. Once releases are published, we recommend pinning one, so an upgrade only happens when you decide. Put this in the `.env` file next to the compose files:
+
+```sh
+SOLDE_VERSION=0.1.0
+```
+
+Compose uses the image of that version if it is already on your machine, pulls it otherwise, and falls back to building it from your checkout when it cannot be pulled. `docker compose pull server` fetches it explicitly. If you build from source instead (`--build`), the image you build gets that tag, so check out the matching release tag (`git checkout v0.1.0`) first.
+
+### PostgreSQL on another machine
+
+The bundled `compose.yaml` talks to its own PostgreSQL over the internal Compose network, without TLS: that traffic never leaves the machine. If you point Solde at a PostgreSQL server on another machine instead, use TLS and check the server's certificate, with `sslmode=verify-full` in `SOLDE_DATABASE_URL` and, for a certificate signed by your own CA, the path to that CA in `sslrootcert`:
+
+```sh
+SOLDE_DATABASE_URL=postgres://solde:password@db.example.test:5432/solde?sslmode=verify-full&sslrootcert=/run/solde-db/ca.pem
+```
+
+Mount the CA file read-only into the container (for example at `/run/solde-db/ca.pem`). `verify-full` checks both that the certificate is signed by a CA you trust and that it was issued for the host name in the URL; weaker modes such as `require` encrypt the traffic but let anyone in the middle pretend to be your database.
 
 ## Back up the key and the data, separately
 
@@ -143,7 +168,19 @@ Your proxy should also pass the `Host` header through and must not cache `/api` 
 ## Upgrading
 
 1. Back up the data (see above). Your key does not change during an upgrade.
-2. Get the new version and restart:
+2. Get the new version and restart.
+
+   With the published image, set the new `SOLDE_VERSION` in your `.env` (or keep `latest`), then pull it and restart:
+
+   ```sh
+   docker compose pull server
+   docker compose up -d
+   # or, with SQLite
+   docker compose -f compose.sqlite.yaml pull server
+   docker compose -f compose.sqlite.yaml up -d
+   ```
+
+   Building from source instead:
 
    ```sh
    git pull
@@ -151,6 +188,8 @@ Your proxy should also pass the `Host` header through and must not cache `/api` 
    # or, with SQLite
    docker compose -f compose.sqlite.yaml up -d --build
    ```
+
+   Compose never replaces an image that is already on your machine by itself: without `pull` or `--build`, `docker compose up` keeps running the version you have.
 
 The server applies any new database migrations when it starts. There is no downgrade: a server refuses to open a database that a newer Solde has already migrated, so if you need to go back to an older version, restore the backup you made in step 1.
 
@@ -161,6 +200,7 @@ The server serves the web app itself, with headers that keep the browser strict:
 ## Something's not right?
 
 - **The server exits with "no master key"**: `keygen` did not run or did not finish. Run `docker compose up` again and look at `docker compose logs keygen`.
+- **`docker compose ps` shows the server as `unhealthy`**: it is not answering on its port. Look at `docker compose logs server`, and at `docker inspect --format '{{json .State.Health}}' "$(docker compose ps -q server)"` for the last probes.
 - **Setup says the code is wrong**: use the code from the latest `docker compose logs server` (a restart prints a new one). After a few wrong tries, wait a minute.
 - **The page loads but you can't stay signed in**: you are probably on plain HTTP from another device; see [On a home network](#on-a-home-network-without-https).
 - **Anything else**: please open an issue with the server logs (`docker compose logs server`). They never contain your key or your passwords (only the one-time setup code, until setup is done), but do have a quick look before sharing them.
