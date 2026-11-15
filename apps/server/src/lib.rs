@@ -9,7 +9,7 @@ use std::io::{Read as _, Write as _};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use axum::{Json, Router, routing::get};
@@ -141,17 +141,22 @@ pub fn listen_addr_from_vars(var: impl Fn(&str) -> Option<String>) -> anyhow::Re
 
 /// The address a local healthcheck connects to: the listen address, with
 /// an unspecified IP (`0.0.0.0`, `::`) replaced by the loopback address.
+/// Any other address (an IPv6 scope id included) is kept as is.
 pub fn healthcheck_addr(listen: SocketAddr) -> SocketAddr {
-    let ip = match listen.ip() {
-        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
-        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
-        ip => ip,
-    };
-    SocketAddr::new(ip, listen.port())
+    match listen {
+        SocketAddr::V4(addr) if addr.ip().is_unspecified() => {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port())
+        }
+        SocketAddr::V6(addr) if addr.ip().is_unspecified() => {
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), addr.port())
+        }
+        addr => addr,
+    }
 }
 
-/// Sends `GET /healthz` to `addr` and succeeds on HTTP 200. Each step
-/// (connect, write, read) is bounded by `timeout`. Used by the container
+/// Sends `GET /healthz` to `addr` and succeeds on HTTP 200. Connecting,
+/// sending and reading the answer are each bounded by `timeout` (reading as
+/// a whole, however slowly the peer answers). Used by the container
 /// healthcheck (`solde-server healthcheck`): it needs no key and no database.
 pub fn healthcheck(addr: SocketAddr, timeout: Duration) -> anyhow::Result<()> {
     let mut stream = TcpStream::connect_timeout(&addr, timeout)
@@ -164,12 +169,21 @@ pub fn healthcheck(addr: SocketAddr, timeout: Duration) -> anyhow::Result<()> {
         .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
         .with_context(|| format!("cannot send the request to {addr}"))?;
     // The status line is all we need; a short read bounds the work.
+    let deadline = Instant::now() + timeout;
     let mut head = Vec::with_capacity(64);
     let mut buf = [0_u8; 64];
     while !head.contains(&b'\n') && head.len() < 1024 {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        anyhow::ensure!(
+            !remaining.is_zero(),
+            "no answer from {addr} within {timeout:?}"
+        );
+        stream
+            .set_read_timeout(Some(remaining))
+            .context("cannot set the socket timeout")?;
         let n = stream
             .read(&mut buf)
-            .with_context(|| format!("no answer from {addr}"))?;
+            .with_context(|| format!("no answer from {addr} within {timeout:?}"))?;
         if n == 0 {
             break;
         }

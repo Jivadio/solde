@@ -52,6 +52,13 @@ fn unspecified_addresses_probe_loopback() {
         solde_server::healthcheck_addr(addr("192.0.2.10:9000")),
         addr("192.0.2.10:9000")
     );
+    // A specified IPv6 address keeps its scope id.
+    let scoped = addr("[fe80::1%3]:8080");
+    assert_eq!(solde_server::healthcheck_addr(scoped), scoped);
+    let SocketAddr::V6(kept) = solde_server::healthcheck_addr(scoped) else {
+        panic!("still IPv6");
+    };
+    assert_eq!(kept.scope_id(), 3);
 }
 
 #[test]
@@ -94,6 +101,34 @@ fn times_out_on_a_silent_server() {
         solde_server::healthcheck(addr, Duration::from_millis(200)).expect_err("silence fails");
     assert!(err.to_string().contains("no answer"), "{err:#}");
     drop(listener);
+}
+
+#[test]
+fn times_out_on_a_trickling_server() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    // Sends one byte every 50 ms and never ends the status line: each read
+    // succeeds, so only a deadline on the whole read stops the probe.
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0_u8; 512];
+        let _ = stream.read(&mut buf);
+        for _ in 0..200 {
+            if stream.write_all(b"H").is_err() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    });
+    let started = std::time::Instant::now();
+    let err =
+        solde_server::healthcheck(addr, Duration::from_millis(300)).expect_err("a trickle fails");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(err.to_string().contains("no answer"), "{err:#}");
 }
 
 /// A real server answers, and the probe needs neither the master key nor
