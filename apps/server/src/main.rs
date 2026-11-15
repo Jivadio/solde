@@ -53,6 +53,7 @@ fn main() -> ExitCode {
 fn healthcheck() -> anyhow::Result<()> {
     let listen = solde_server::listen_addr_from_vars(|name| std::env::var(name).ok())?;
     let addr = solde_server::healthcheck_addr(listen);
+    // 3 s for the whole probe, under the image's HEALTHCHECK --timeout=5s.
     solde_server::healthcheck(addr, std::time::Duration::from_secs(3))?;
     println!("ok");
     Ok(())

@@ -154,32 +154,33 @@ pub fn healthcheck_addr(listen: SocketAddr) -> SocketAddr {
     }
 }
 
-/// Sends `GET /healthz` to `addr` and succeeds on HTTP 200. Connecting,
-/// sending and reading the answer are each bounded by `timeout` (reading as
-/// a whole, however slowly the peer answers). Used by the container
-/// healthcheck (`solde-server healthcheck`): it needs no key and no database.
+/// Sends `GET /healthz` to `addr` and succeeds on HTTP 200. The whole
+/// probe (connecting, sending, reading the answer, however slowly the peer
+/// answers) is bounded by one `timeout`. Used by the container healthcheck
+/// (`solde-server healthcheck`): it needs no key and no database.
 pub fn healthcheck(addr: SocketAddr, timeout: Duration) -> anyhow::Result<()> {
-    let mut stream = TcpStream::connect_timeout(&addr, timeout)
+    let deadline = Instant::now() + timeout;
+    // Time left before the deadline, or an error once it has passed (socket
+    // timeouts must not be zero).
+    let remaining = || {
+        let left = deadline.saturating_duration_since(Instant::now());
+        anyhow::ensure!(!left.is_zero(), "no answer from {addr} within {timeout:?}");
+        Ok(left)
+    };
+    let mut stream = TcpStream::connect_timeout(&addr, remaining()?)
         .with_context(|| format!("cannot connect to {addr}"))?;
     stream
-        .set_read_timeout(Some(timeout))
-        .and_then(|()| stream.set_write_timeout(Some(timeout)))
-        .context("cannot set the socket timeouts")?;
+        .set_write_timeout(Some(remaining()?))
+        .context("cannot set the socket timeout")?;
     stream
         .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
         .with_context(|| format!("cannot send the request to {addr}"))?;
     // The status line is all we need; a short read bounds the work.
-    let deadline = Instant::now() + timeout;
     let mut head = Vec::with_capacity(64);
     let mut buf = [0_u8; 64];
     while !head.contains(&b'\n') && head.len() < 1024 {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        anyhow::ensure!(
-            !remaining.is_zero(),
-            "no answer from {addr} within {timeout:?}"
-        );
         stream
-            .set_read_timeout(Some(remaining))
+            .set_read_timeout(Some(remaining()?))
             .context("cannot set the socket timeout")?;
         let n = stream
             .read(&mut buf)

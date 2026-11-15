@@ -154,14 +154,20 @@ fn succeeds_against_a_running_server_without_secrets() {
     .stderr(Stdio::null())
     .spawn()
     .expect("spawn solde-server");
+    // Wait for the "listening" log line on another thread, with a deadline,
+    // so a changed log line fails the test instead of hanging it.
     let stdout = child.stdout.take().expect("stdout");
-    let mut listening = false;
-    for line in BufReader::new(stdout).lines() {
-        if line.expect("log line").contains("listening") {
-            listening = true;
-            break;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if line.contains("listening") {
+                let _ = tx.send(());
+                break;
+            }
         }
-    }
+    });
+    let listening = rx.recv_timeout(Duration::from_secs(30)).is_ok();
 
     let output = healthcheck(&listen);
     let _ = child.kill();
