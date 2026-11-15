@@ -32,6 +32,8 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       version: ${{ steps.release.outputs.version }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
     env:
       # Both the app's client ID (variable) and private key (secret) are needed.
       RELEASE_APP_CONFIGURED: ${{ vars.RELEASE_APP_CLIENT_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
@@ -62,7 +64,8 @@ jobs:
           manifest-file: .release-please-manifest.json
 
   # Runs only when release-please has just tagged a release (the push that
-  # merged the release PR), on that release commit.
+  # merged the release PR). It builds the tagged commit, which may differ from
+  # the commit that triggered this run when runs queue up.
   image:
     name: publish image
     needs: release-please
@@ -78,7 +81,24 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.release-please.outputs.sha }}
           persist-credentials: false
+
+      # A re-run of an older release job keeps its original outputs: it may
+      # publish its version tag again, but must not move `latest` back.
+      - name: Tag latest only for the newest release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          newest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          if [ "$newest" = "$TAG" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$TAG is not the newest release ($newest): latest is left alone."
+          fi
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -96,7 +116,7 @@ jobs:
           flavor: latest=false
           tags: |
             type=raw,value=${{ needs.release-please.outputs.version }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ steps.latest.outputs.enabled }}
           labels: |
             org.opencontainers.image.title=solde
             org.opencontainers.image.description=Self-hosted household finance server
