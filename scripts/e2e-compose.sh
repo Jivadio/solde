@@ -7,7 +7,8 @@
 #   scripts/e2e-compose.sh compose.sqlite.yaml    # SQLite
 #
 # It starts the stack with `docker compose up -d --build`, then checks that
-# /healthz answers within 60 s, that setup needs the one-time setup code
+# /healthz answers within 60 s, that the server container's healthcheck
+# reports it healthy, that setup needs the one-time setup code
 # printed in the server log, that an admin can set up the instance with it,
 # sign in, create an account and list it, that the web app is served, that
 # the master key never shows in the logs, that `admin export-key` returns the key
@@ -89,6 +90,19 @@ until [ "$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "$base/healthz" |
   sleep 1
 done
 echo "    healthy after $(($(date +%s) - start)) s"
+
+step "the container healthcheck reports healthy (at most 60 s)"
+container=$(compose ps -q server)
+[ -n "$container" ] || fail "no server container"
+start=$(date +%s)
+until [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")" = healthy ]; do
+  if [ $(($(date +%s) - start)) -ge 60 ]; then
+    docker inspect --format '{{json .State.Health}}' "$container" >&2 || true
+    fail "the server container did not become healthy within 60 s"
+  fi
+  sleep 1
+done
+echo "    container healthy after $(($(date +%s) - start)) s"
 
 step "web app and API boundary"
 expect 200 "$(api GET /)" "GET /"

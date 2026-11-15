@@ -5,9 +5,11 @@
 //! (see [`web`]).
 
 use std::backtrace::Backtrace;
-use std::net::SocketAddr;
+use std::io::{Read as _, Write as _};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use axum::{Json, Router, routing::get};
@@ -88,10 +90,7 @@ impl Config {
 
     /// Reads the settings through `var` (the environment, or a test map).
     pub fn from_vars(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<Self> {
-        let listen_addr = var("SOLDE_LISTEN_ADDR")
-            .unwrap_or_else(|| "0.0.0.0:8080".to_owned())
-            .parse()
-            .context("SOLDE_LISTEN_ADDR must be a socket address, e.g. 0.0.0.0:8080")?;
+        let listen_addr = listen_addr_from_vars(&var)?;
         let database_url = var("SOLDE_DATABASE_URL")
             .filter(|url| !url.trim().is_empty())
             .context(
@@ -130,6 +129,61 @@ impl Config {
             },
         })
     }
+}
+
+/// Reads `SOLDE_LISTEN_ADDR` through `var`, default `0.0.0.0:8080`.
+pub fn listen_addr_from_vars(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<SocketAddr> {
+    var("SOLDE_LISTEN_ADDR")
+        .unwrap_or_else(|| "0.0.0.0:8080".to_owned())
+        .parse()
+        .context("SOLDE_LISTEN_ADDR must be a socket address, e.g. 0.0.0.0:8080")
+}
+
+/// The address a local healthcheck connects to: the listen address, with
+/// an unspecified IP (`0.0.0.0`, `::`) replaced by the loopback address.
+pub fn healthcheck_addr(listen: SocketAddr) -> SocketAddr {
+    let ip = match listen.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ip => ip,
+    };
+    SocketAddr::new(ip, listen.port())
+}
+
+/// Sends `GET /healthz` to `addr` and succeeds on HTTP 200. Each step
+/// (connect, write, read) is bounded by `timeout`. Used by the container
+/// healthcheck (`solde-server healthcheck`): it needs no key and no database.
+pub fn healthcheck(addr: SocketAddr, timeout: Duration) -> anyhow::Result<()> {
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)
+        .with_context(|| format!("cannot connect to {addr}"))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .and_then(|()| stream.set_write_timeout(Some(timeout)))
+        .context("cannot set the socket timeouts")?;
+    stream
+        .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .with_context(|| format!("cannot send the request to {addr}"))?;
+    // The status line is all we need; a short read bounds the work.
+    let mut head = Vec::with_capacity(64);
+    let mut buf = [0_u8; 64];
+    while !head.contains(&b'\n') && head.len() < 1024 {
+        let n = stream
+            .read(&mut buf)
+            .with_context(|| format!("no answer from {addr}"))?;
+        if n == 0 {
+            break;
+        }
+        head.extend_from_slice(&buf[..n]);
+    }
+    let head = String::from_utf8_lossy(&head);
+    let status_line = head.lines().next().unwrap_or_default();
+    let status = status_line.split_whitespace().nth(1);
+    anyhow::ensure!(
+        status_line.starts_with("HTTP/") && status == Some("200"),
+        "GET /healthz on {addr} answered {:?}, expected HTTP 200",
+        status_line
+    );
+    Ok(())
 }
 
 /// The one-time setup code for a store that is not set up yet, logged once

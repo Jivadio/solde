@@ -47,4 +47,8 @@ USER nonroot:nonroot
 ENV SOLDE_LISTEN_ADDR=0.0.0.0:8080 \
     SOLDE_WEB_DIR=/usr/share/solde/web
 EXPOSE 8080
+# No shell or curl here: the binary probes its own /healthz (on the port of
+# SOLDE_LISTEN_ADDR, loading no key and no database) and exits 0 or 1.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --start-interval=2s --retries=3 \
+    CMD ["/usr/local/bin/solde-server", "healthcheck"]
 ENTRYPOINT ["/usr/local/bin/solde-server"]
