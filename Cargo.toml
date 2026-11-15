@@ -49,6 +49,8 @@ ipnet = "2"
 regex = "1"
 # TLS through rustls with the ring provider only (no OpenSSL, no aws-lc).
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+# AES-256-GCM and random nonces for the credential vault (`solde-secrets`).
+ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1", features = ["derive"] }
 # PostgreSQL and SQLite (bundled) through one driver; TLS via rustls with the

@@ -7,8 +7,22 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+# Drive syncs: start one and read its status. No credentials, no challenges.
+trigger = []
+# Supply credentials and answer 2FA challenges. Never enabled for `solde-mcp`.
+intake = []
+
 [dependencies]
-solde-services = { path = "../services" }
+solde-core-domain = { path = "../core-domain" }
+# Ids cross the wire as text; views serialize without secrets.
+serde.workspace = true
+# Wipes credential strings from memory on drop.
+zeroize.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true
